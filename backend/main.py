@@ -8,8 +8,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-# Ollama 服务地址，可通过环境变量覆盖默认的局域网地址
-OLLAMA_CHAT_URL = os.getenv("OLLAMA_CHAT_URL", "http://10.10.10.28:11434/api/chat")
+# Ollama 服务地址，支持通过 OLLAMA_URL 环境变量进行 dev/prod 多环境切换
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://10.10.10.28:11434/api/chat")
 
 app = FastAPI(title="Ollama Chat Proxy", version="1.0.0")
 
@@ -88,7 +88,7 @@ async def _forward_non_streaming(
 ) -> Response:
     async with httpx.AsyncClient(timeout=timeout) as client:
         # 使用 httpx POST 请求调用 Ollama，timeout 控制整体和连接超时
-        response = await client.post(OLLAMA_CHAT_URL, json=payload)
+        response = await client.post(OLLAMA_URL, json=payload)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -111,7 +111,7 @@ async def _stream_from_ollama(
 
     async def event_stream():
         try:
-            async with client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
+            async with client.stream("POST", OLLAMA_URL, json=payload) as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_bytes():
                     yield chunk
