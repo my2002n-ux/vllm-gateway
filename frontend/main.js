@@ -19,13 +19,20 @@ const maxTokensInput = document.getElementById('max-tokens-input');
 const promptInput = document.getElementById('prompt-input');
 const imageInput = document.getElementById('image-input');
 const imagePreview = document.getElementById('image-preview');
+const imageSection = document.getElementById('image-section');
 const sendBtn = document.getElementById('send-btn');
+const stopBtn = document.getElementById('stop-btn');
 const chatArea = document.getElementById('chat-area');
 const statusTime = document.getElementById('status-time');
 const statusResult = document.getElementById('status-result');
 let selectedImages = [];
+let currentController = null; // currentController：配合停止按钮中断当前 fetch
 
 initModelSelect();
+updateImageSectionVisibility();
+modelSelect.addEventListener('change', () => {
+  updateImageSectionVisibility();
+});
 
 // 注册文件选择预览逻辑，支持多张图片预览（最多 5 张）
 imageInput.addEventListener('change', () => {
@@ -49,6 +56,15 @@ sendBtn.addEventListener('click', () => {
   handleSend().catch((err) => console.error('发送失败', err));
 });
 
+// 点击停止按钮时终止当前流式请求
+stopBtn.addEventListener('click', () => {
+  if (!currentController) return;
+  currentController.abort();
+  currentController = null;
+  updateButtonsDuringRequest(false);
+  setStatusResult('已停止', null);
+});
+
 // 初始化模型下拉框，后续可改为 fetch 后端接口
 function initModelSelect() {
   modelSelect.innerHTML = '';
@@ -61,7 +77,7 @@ function initModelSelect() {
   modelSelect.value = MODEL_OPTIONS[0];
 }
 
-// 判断模型是否支持图片：白名单优先，其次根据名称包含关键字判断
+// 判断模型是否支持图片：白名单优先（当前含 qwen3-vl:32b、gemma3:27b），其次看模型名是否含 vl/vision
 function supportsImage(modelName) {
   if (!modelName) return false;
   if (IMAGE_MODELS.includes(modelName)) {
@@ -74,8 +90,27 @@ function supportsImage(modelName) {
   return false;
 }
 
+// 根据当前模型决定是否展示图片上传区域，并在隐藏时清空数据
+function updateImageSectionVisibility() {
+  const supports = supportsImage(modelSelect.value);
+  if (supports) {
+    imageSection.style.display = 'flex';
+  } else {
+    imageSection.style.display = 'none';
+    selectedImages = [];
+    imageInput.value = '';
+    renderImagePreview([]);
+  }
+}
+
 // 处理发送逻辑：读取输入、构造 payload、流式解析响应
 async function handleSend() {
+  // 如果还有未结束的请求，先终止上一轮
+  if (currentController) {
+    currentController.abort();
+    currentController = null;
+  }
+
   const text = promptInput.value.trim();
   const imageFiles = selectedImages;
   if (!text && imageFiles.length === 0) {
@@ -87,9 +122,13 @@ async function handleSend() {
   const requestTimeText = formatTimestamp(requestTime);
   const selectedModel = modelSelect.value;
 
-  sendBtn.disabled = true;
   setStatusResult('请求进行中...', null);
   const startTime = performance.now();
+  updateButtonsDuringRequest(true);
+  const controller = new AbortController(); // 与停止按钮配合，用于中断 fetch
+  currentController = controller;
+  let assistantMsg = null;
+  const usageHolder = { data: null };
 
   try {
     const previewDataUrls = imageFiles.length
@@ -97,25 +136,21 @@ async function handleSend() {
       : [];
     const modelSupportsImage = supportsImage(selectedModel);
 
-    if (previewDataUrls.length && !modelSupportsImage && !text) {
-      throw new Error('当前模型不支持图片且没有文本内容，已取消发送。');
+    if (!modelSupportsImage && !text) {
+      throw new Error('当前模型不支持图片，且没有可发送的文本。');
     }
 
-    const needImageWarning = Boolean(previewDataUrls.length && !modelSupportsImage && text);
-    const payloadImages = modelSupportsImage ? previewDataUrls : [];
-    const messages = buildMessages(systemInput.value.trim(), text, payloadImages);
+    const selectedImageDataUrls = modelSupportsImage ? previewDataUrls : [];
+    const messages = buildMessages(systemInput.value.trim(), text, selectedImageDataUrls);
     const payload = buildPayload(messages, selectedModel);
+    console.log('payload', payload); // 方便在浏览器中检查最终请求体结构
 
     appendUserMessage(
       text || (previewDataUrls.length ? '（仅发送图片）' : ''),
       previewDataUrls,
       requestTimeText,
     );
-    if (needImageWarning) {
-      appendSystemMessage('当前模型不支持图片，已只发送文本内容。');
-    }
-    const assistantMsg = appendAssistantMessage(requestTimeText, selectedModel);
-    const usageHolder = { data: null };
+    assistantMsg = appendAssistantMessage(requestTimeText, selectedModel);
 
     const response = await fetch(buildRequestUrl(), {
       method: 'POST',
@@ -123,6 +158,7 @@ async function handleSend() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -159,20 +195,44 @@ async function handleSend() {
     statusTime.textContent = `耗时：${duration} ms`;
     setStatusResult('请求成功', true);
     updateAssistantMetadata(
-      assistantMsg.metaLine,
+      assistantMsg?.metaLine,
       requestTimeText,
       duration,
       usageHolder.data,
       selectedModel,
+      '完成',
     );
   } catch (error) {
     const duration = Math.round(performance.now() - startTime);
     statusTime.textContent = `耗时：${duration} ms`;
-    setStatusResult('请求失败', false);
-    appendSystemMessage(error.message || '未知错误');
-    console.error(error);
+    if (error.name === 'AbortError') {
+      setStatusResult('已停止', null);
+      updateAssistantMetadata(
+        assistantMsg?.metaLine,
+        requestTimeText,
+        duration,
+        usageHolder.data,
+        selectedModel,
+        '已停止',
+      );
+    } else {
+      setStatusResult('请求失败', false);
+      updateAssistantMetadata(
+        assistantMsg?.metaLine,
+        requestTimeText,
+        duration,
+        usageHolder.data,
+        selectedModel,
+        '错误',
+      );
+      appendSystemMessage(error.message || '未知错误');
+      console.error(error);
+    }
   } finally {
-    sendBtn.disabled = false;
+    if (currentController === controller) {
+      currentController = null;
+      updateButtonsDuringRequest(false);
+    }
   }
 }
 
@@ -197,27 +257,29 @@ function buildPayload(messages, modelName) {
   return payload;
 }
 
-// 根据 system / 文本 / 图片组合构建 messages 数组
+// 按 OpenAI 多模态标准构建 messages：content 为 text/image_url 组成的数组
 function buildMessages(systemText, text, imageDataUrls) {
   const messages = [];
   if (systemText) {
     messages.push({ role: 'system', content: systemText });
   }
 
-  const hasImages = Array.isArray(imageDataUrls) && imageDataUrls.length > 0;
-  if (hasImages) {
-    const contentParts = [];
-    if (text) {
-      contentParts.push({ type: 'text', text });
-    }
-    imageDataUrls.forEach((url) => {
-      contentParts.push({ type: 'image_url', image_url: url });
+  const contents = [];
+  if (text) {
+    contents.push({ type: 'text', text });
+  }
+  for (const dataUrl of imageDataUrls) {
+    contents.push({
+      type: 'image_url',
+      image_url: { url: dataUrl }, // image_url 必须是 { url: ... } 对象
     });
-    messages.push({ role: 'user', content: contentParts });
-  } else {
-    messages.push({ role: 'user', content: text });
   }
 
+  if (!contents.length) {
+    throw new Error('缺少可发送的文本或图片内容');
+  }
+
+  messages.push({ role: 'user', content: contents });
   return messages;
 }
 
@@ -235,7 +297,7 @@ function readFileAsDataURL(file) {
 function buildRequestUrl() {
   let base = backendInput.value.trim();
   if (!base) {
-    base = 'http://10.10.10.61:8000';
+    base = 'http://192.168.1.61:8000';
   }
   if (base.endsWith('/')) {
     base = base.slice(0, -1);
@@ -449,8 +511,8 @@ function normalizeContent(content) {
   return '';
 }
 
-// 更新 assistant 元信息（时间 / 耗时 / 模型 / token 使用情况）
-function updateAssistantMetadata(metaEl, timeText, durationMs, usage, modelName) {
+// 更新 assistant 元信息（时间 / 耗时 / 模型 / token / 状态）
+function updateAssistantMetadata(metaEl, timeText, durationMs, usage, modelName, statusText) {
   if (!metaEl) return;
   let text = `时间：${timeText}`;
   text += ` ｜ 用时：${formatDuration(durationMs)}`;
@@ -460,6 +522,9 @@ function updateAssistantMetadata(metaEl, timeText, durationMs, usage, modelName)
   const usageText = formatUsage(usage);
   if (usageText) {
     text += ` ｜ ${usageText}`;
+  }
+  if (statusText) {
+    text += ` ｜ 状态：${statusText}`;
   }
   metaEl.textContent = text;
 }
@@ -527,4 +592,10 @@ function setStatusResult(text, successFlag) {
 // 保持聊天区域滚动到底部，方便查看最新流式内容
 function autoScroll() {
   chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// 控制发送/停止按钮的启用状态
+function updateButtonsDuringRequest(inProgress) {
+  sendBtn.disabled = inProgress;
+  stopBtn.disabled = !inProgress;
 }

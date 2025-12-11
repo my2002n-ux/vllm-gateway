@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 # Ollama 服务地址，支持通过 OLLAMA_URL 环境变量进行 dev/prod 多环境切换
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://10.10.10.28:11434/api/chat")
+# 支持多模态图片输入的模型白名单
+VL_MODELS = {"qwen3-vl:32b", "gemma3:27b"}
 
 app = FastAPI(title="Ollama Chat Proxy", version="1.0.0")
 
@@ -85,20 +87,47 @@ def extract_text_and_images(message: Message) -> Tuple[str, List[str]]:
                     images.append(url)
 
     text = "\n\n".join(text_segments)
+
+    # 调试日志：记录每条消息解析出来的文本长度和图片数量
+    print(
+        f"[DEBUG] extract_text_and_images role={message.role}, "
+        f"text_len={len(text)}, images_count={len(images)}"
+    )
+    if images:
+        print("[DEBUG] first_image_prefix=", images[0][:60])
+
     return text, images
 
 
-def normalize_messages_for_backend(messages: List[Message]) -> List[Dict[str, Any]]:
-    """将 Message 转成底层模型可消费的结构，统一 content 字段，并按需附带 images。"""
-    normalized: List[Dict[str, Any]] = []
-    for message in messages:
+def prepare_messages_for_backend(request: ChatCompletionRequest) -> List[Dict[str, Any]]:
+    """根据模型类型决定转发内容：VL 模型保留原始多模态，文本模型只发送拼接后的正文。"""
+    vl_mode = request.model in VL_MODELS
+    prepared: List[Dict[str, Any]] = []
+    total_images = 0
+
+    for message in request.messages:
         text, images = extract_text_and_images(message)
-        message_dict = message.dict(exclude_none=True, exclude={"content"})
-        message_dict["content"] = text
-        if images:
-            message_dict["images"] = images  # 底层模型可根据 images 判断是否需要多模态输入
-        normalized.append(message_dict)
-    return normalized
+        total_images += len(images)
+
+        if vl_mode:
+            prepared.append(message.dict(exclude_none=True))
+        else:
+            message_dict = message.dict(exclude_none=True, exclude={"content"})
+            message_dict["content"] = text
+            if images:
+                message_dict["images"] = images
+            prepared.append(message_dict)
+
+    if vl_mode:
+        print(f"[DEBUG] call VL model={request.model}, images_count={total_images}")
+    else:
+        if total_images:
+            print(
+                f"[WARN] model {request.model} received {total_images} images but model is not VL"
+            )
+        print(f"[DEBUG] call text model={request.model}")
+
+    return prepared
 
 
 # 将 OpenAI 风格的请求转换成 Ollama /api/chat 接口所需的字段
@@ -162,7 +191,7 @@ async def _forward_non_streaming(
 async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = normalize_messages_for_backend(request.messages)
+    request_dict["messages"] = prepare_messages_for_backend(request)
     request_dict["stream"] = True
     ollama_payload = _build_ollama_payload(request_dict)
     timeout = httpx.Timeout(60.0, connect=10.0)
@@ -198,7 +227,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = normalize_messages_for_backend(request.messages)
+    request_dict["messages"] = prepare_messages_for_backend(request)
     # 将 OpenAI 风格请求转换成 Ollama 兼容格式
     ollama_payload = _build_ollama_payload(request_dict)
     # 定义客户端与 Ollama 交互的超时设置（60 秒响应、10 秒连接）

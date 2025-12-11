@@ -66,6 +66,7 @@
       flex: 1;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
 
     .section-title {
@@ -134,8 +135,14 @@
       border: 1px dashed var(--border);
     }
 
-    .send-btn {
+    .action-row {
+      display: flex;
+      gap: 10px;
       margin-top: 8px;
+    }
+
+    .send-btn {
+      flex: 1;
       padding: 12px;
       border: none;
       border-radius: 12px;
@@ -146,7 +153,12 @@
       transition: opacity 0.2s ease;
     }
 
-    .send-btn:disabled {
+    .stop-btn {
+      background: #ef4444;
+    }
+
+    .send-btn:disabled,
+    .stop-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
@@ -160,6 +172,7 @@
     .chat-area {
       flex: 1;
       overflow-y: auto;
+      overflow-x: hidden;
       padding-right: 6px;
       display: flex;
       flex-direction: column;
@@ -175,10 +188,12 @@
     .bubble {
       padding: 12px 16px;
       border-radius: 16px;
-      max-width: 85%;
+      max-width: 100%;
       line-height: 1.6;
       box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
       white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
 
     .bubble.user {
@@ -204,6 +219,7 @@
       flex-direction: column;
       align-items: flex-start;
       gap: 8px;
+      width: 100%;
     }
 
     .thought-block {
@@ -213,7 +229,11 @@
       border-radius: 12px;
       font-size: 13px;
       color: #4b5563;
-      min-width: 60%;
+      width: 100%;
+      max-width: 100%;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
 
     .thought-block .tag {
@@ -259,7 +279,7 @@
       <div class="section-title">调试区</div>
       <div class="form-group">
         <label for="backend-input">后端地址</label>
-        <input id="backend-input" type="text" value="http://10.10.10.61:8000" />
+        <input id="backend-input" type="text" value="http://192.168.1.61:8000" />
       </div>
       <div class="form-group">
         <label for="model-select">模型名称</label>
@@ -283,12 +303,15 @@
         <label for="prompt-input">用户提示词</label>
         <textarea id="prompt-input" placeholder="请输入您的提示词..."></textarea>
       </div>
-      <div class="file-row">
+      <div id="image-section" class="file-row">
         <label for="image-input">上传图片（可选，最多 5 张）</label>
         <input id="image-input" type="file" accept="image/*" multiple />
         <div id="image-preview" class="preview-grid"></div>
       </div>
-      <button id="send-btn" class="send-btn">发送</button>
+      <div class="action-row">
+        <button id="send-btn" class="send-btn">发送</button>
+        <button id="stop-btn" class="send-btn stop-btn" disabled>停止</button>
+      </div>
     </section>
 
     <section class="panel chat-panel">
