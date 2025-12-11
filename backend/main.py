@@ -129,45 +129,46 @@ def extract_text_and_images(message: Message) -> Tuple[str, List[str]]:
     return text, images
 
 
-def prepare_messages_for_backend(request: ChatCompletionRequest) -> List[Dict[str, Any]]:
-    """根据模型类型决定转发内容：VL 模型保留原始多模态，文本模型只发送拼接后的正文。"""
-    vl_mode = request.model in VL_MODELS
-    prepared: List[Dict[str, Any]] = []
+def prepare_messages_for_backend(
+    request: ChatCompletionRequest,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """根据是否携带图片决定调用纯文本路径还是 VL 路径。"""
+    text_messages: List[Dict[str, Any]] = []
+    has_image = False
     total_images = 0
 
     for message in request.messages:
         text, images = extract_text_and_images(message)
-        total_images += len(images)
+        if images:
+            has_image = True
+            total_images += len(images)
 
-        if vl_mode:
-            continue
-        else:
-            message_dict = message.dict(exclude_none=True, exclude={"content"})
-            message_dict["content"] = text
-            if images:
-                message_dict["images"] = images
-            prepared.append(message_dict)
+        message_dict = message.dict(exclude_none=True, exclude={"content"})
+        message_dict["content"] = text
+        if images:
+            message_dict["images"] = images
+        text_messages.append(message_dict)
 
-    if vl_mode:
-        vl_messages = normalize_messages_for_vl(request.messages)
+    if not has_image:
+        print(f"[DEBUG] has_image=False, use text-only path, model={request.model}")
+        return text_messages, False
+
+    if request.model not in VL_MODELS:
         print(
-            f"[DEBUG] incoming model={request.model}, stream={request.stream}, "
-            f"images_count={total_images}"
+            f"[WARN] model {request.model} received {total_images} images but model is not VL"
         )
-        print(f"[DEBUG] call VL model={request.model}, msg_count={len(vl_messages)}")
-        if vl_messages:
-            print(f"[DEBUG] first vl message: {vl_messages[0]}")
-        else:
-            print("[DEBUG] first vl message: EMPTY")
-        return vl_messages
-    else:
-        if total_images:
-            print(
-                f"[WARN] model {request.model} received {total_images} images but model is not VL"
-            )
-        print(f"[DEBUG] call text model={request.model}")
+        return text_messages, True
 
-    return prepared
+    vl_messages = normalize_messages_for_vl(request.messages)
+    print(
+        f"[DEBUG] has_image=True, use VL path, model={request.model}, "
+        f"msg_count={len(vl_messages)}"
+    )
+    if vl_messages:
+        print(f"[DEBUG] first vl message: {vl_messages[0]}")
+    else:
+        print("[DEBUG] first vl message: EMPTY")
+    return vl_messages, True
 
 
 # 将 OpenAI 风格的请求转换成 Ollama /api/chat 接口所需的字段
@@ -231,7 +232,8 @@ async def _forward_non_streaming(
 async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = prepare_messages_for_backend(request)
+    prepared_messages, _ = prepare_messages_for_backend(request)
+    request_dict["messages"] = prepared_messages
     request_dict["stream"] = True
     ollama_payload = _build_ollama_payload(request_dict)
     timeout = httpx.Timeout(60.0, connect=10.0)
@@ -267,7 +269,8 @@ async def chat_completions(request: ChatCompletionRequest):
 
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = prepare_messages_for_backend(request)
+    prepared_messages, _ = prepare_messages_for_backend(request)
+    request_dict["messages"] = prepared_messages
     # 将 OpenAI 风格请求转换成 Ollama 兼容格式
     ollama_payload = _build_ollama_payload(request_dict)
     # 定义客户端与 Ollama 交互的超时设置（60 秒响应、10 秒连接）
