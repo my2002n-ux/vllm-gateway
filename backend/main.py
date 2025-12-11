@@ -26,6 +26,12 @@ class Message(BaseModel):
     class Config:
         extra = "allow"
 
+# 根路径重定向到 /docs
+from fastapi.responses import RedirectResponse
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
 
 # ChatCompletionRequest 模型与 OpenAI Chat Completions 接口对齐：
 # - model/messages 为必填
