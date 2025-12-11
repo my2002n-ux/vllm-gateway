@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
 import os
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union, Literal
+from typing import Any, Dict, List, Optional, Union, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -130,7 +131,8 @@ def _save_data_url_image(data_url: str) -> Optional[str]:
         return None
 
     file_url = f"{IMAGE_BASE_URL}/{filename}"
-    print(f"[DEBUG] saved image to {file_path}, url={file_url}")
+    print(f"[DEBUG] saved image: {file_path}")
+    print(f"[DEBUG] saved image url={file_url}")
     return file_url
 
 
@@ -168,6 +170,38 @@ def replace_dataurls_with_local_files(messages: List[Message]) -> int:
     return saved
 
 
+def _local_url_to_data_url(url: str) -> Optional[str]:
+    if not url.startswith(IMAGE_BASE_URL):
+        print(f"[WARN] skip external image url: {url}")
+        return None
+
+    filename = os.path.basename(url)
+    local_path = os.path.join(IMAGE_DIR, filename)
+    if not os.path.exists(local_path):
+        print(f"[ERROR] local image path not found: {local_path}")
+        return None
+
+    mime_type, _ = mimetypes.guess_type(local_path)
+    if not mime_type:
+        mime_type = "image/png"
+
+    try:
+        with open(local_path, "rb") as f:
+            image_bytes = f.read()
+    except OSError as exc:
+        print(f"[ERROR] cannot read image file {local_path}: {exc}")
+        return None
+
+    try:
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+    except Exception as exc:
+        print(f"[ERROR] failed to base64 encode {local_path}: {exc}")
+        return None
+
+    print(f"[DEBUG] encoded base64 length: {len(encoded)} for {local_path}")
+    return f"data:{mime_type};base64,{encoded}"
+
+
 # 将 OpenAI 风格的请求转换成 Ollama /api/chat 接口所需的字段
 def _build_ollama_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Translate the OpenAI-style payload into an Ollama chat request."""
@@ -201,23 +235,54 @@ def _build_ollama_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if options:
         ollama_payload["options"] = options
 
-    images = payload.get("images")
-    if images:
-        ollama_payload["images"] = images
-
     return ollama_payload
 
 
-def build_proxy_messages_and_images(
+def _log_payload_debug(payload: Dict[str, Any]) -> None:
+    try:
+        summary: Dict[str, Any] = {
+            "model": payload.get("model"),
+            "stream": payload.get("stream"),
+            "messages": [],
+        }
+        for msg in payload.get("messages", []):
+            msg_info: Dict[str, Any] = {"role": msg.get("role")}
+            content = msg.get("content")
+            if isinstance(content, list):
+                parts_info: List[Dict[str, Any]] = []
+                for part in content:
+                    part_type = part.get("type")
+                    if part_type == "image_url":
+                        url = (
+                            part.get("image_url", {}).get("url")
+                            if isinstance(part.get("image_url"), dict)
+                            else None
+                        )
+                        parts_info.append(
+                            {"type": "image_url", "length": len(url) if isinstance(url, str) else 0}
+                        )
+                    elif part_type == "text":
+                        text = part.get("text") or ""
+                        parts_info.append({"type": "text", "text_len": len(text)})
+                msg_info["content"] = parts_info
+            elif isinstance(content, str):
+                msg_info["content_len"] = len(content)
+            summary["messages"].append(msg_info)
+
+        print(f"[DEBUG] final payload sent to Ollama: {json.dumps(summary, ensure_ascii=False)}")
+    except Exception as exc:
+        print(f"[DEBUG] payload summary error: {exc}")
+
+
+def prepare_messages_for_ollama(
     messages: List[Message], model_name: str
-) -> Tuple[List[Dict[str, Any]], List[str]]:
+) -> List[Dict[str, Any]]:
     """
-    将 OpenAI 风格的 content 结构拆成纯文本消息和本地图片 base64。
-    对于 VL 模型，需要把前端传入的图片 URL 映射到本地文件，再转成 base64 字符串发送给 Ollama。
-    非 VL 模型忽略图片，仅拼接文本，避免让不支持的模型报错。
+    构造最终发送给 Ollama 的消息：
+    - 对 VL 模型，将本地图片转换成 data URL，并以前置 image_url + 末尾文本的结构拼装 content 数组；
+    - 对纯文本模型，只拼接文本，忽略图片，避免请求出错。
     """
-    proxy_messages: List[Dict[str, Any]] = []
-    images_b64: List[str] = []
+    prepared: List[Dict[str, Any]] = []
     is_vl_model = model_name in VL_MODELS
 
     if is_vl_model:
@@ -228,69 +293,73 @@ def build_proxy_messages_and_images(
         print(f"[DEBUG] model {model_name} not in VL_MODELS, image parts will be ignored")
 
     for message in messages:
-        text_segments: List[str] = []
+        message_dict = message.dict(exclude_none=True, exclude={"content"})
         content = message.content
 
-        if isinstance(content, str):
-            text_content = content
-        elif isinstance(content, list):
-            for part in content:
-                if part.type == "text":
-                    if part.text:
-                        text_segments.append(part.text)
-                elif part.type == "image_url":
-                    if not is_vl_model:
-                        print(
-                            f"[WARN] ignore image for non-VL model {model_name}, role={message.role}"
-                        )
-                        continue
+        if isinstance(content, str) or content is None:
+            message_dict["content"] = content or ""
+            prepared.append(message_dict)
+            continue
 
-                    image_field = part.image_url
-                    url: Optional[str] = None
-                    if isinstance(image_field, dict):
-                        url = image_field.get("url") or image_field.get("data")
-                    elif isinstance(image_field, str):
-                        url = image_field
+        if not isinstance(content, list):
+            message_dict["content"] = ""
+            prepared.append(message_dict)
+            continue
 
-                    if not url:
-                        print("[WARN] image_url part missing url field, skip")
-                        continue
+        if not is_vl_model:
+            text_segments = [part.text for part in content if part.type == "text" and part.text]
+            message_dict["content"] = "\n\n".join(text_segments)
+            prepared.append(message_dict)
+            continue
 
-                    if not url.startswith(IMAGE_BASE_URL):
-                        print(f"[WARN] skip external image url: {url}")
-                        continue
+        image_data_urls: List[str] = []
+        text_segments: List[str] = []
+        for part in content:
+            if part.type == "image_url" and part.image_url:
+                image_field = part.image_url
+                url: Optional[str] = None
+                if isinstance(image_field, dict):
+                    url = image_field.get("url") or image_field.get("data")
+                elif isinstance(image_field, str):
+                    url = image_field
 
-                    filename = os.path.basename(url)
-                    local_path = os.path.join(IMAGE_DIR, filename)
-                    try:
-                        with open(local_path, "rb") as f:
-                            image_bytes = f.read()
-                    except OSError as exc:
-                        print(f"[ERROR] cannot read image file {local_path}: {exc}")
-                        continue
+                if not url:
+                    print("[WARN] image_url part missing url field, skip")
+                    continue
 
-                    try:
-                        encoded = base64.b64encode(image_bytes).decode("utf-8")
-                    except Exception as exc:
-                        print(f"[ERROR] failed to base64 encode {local_path}: {exc}")
-                        continue
+                if url.startswith("data:image"):
+                    local_url = _save_data_url_image(url)
+                    if local_url:
+                        url = local_url
 
-                    images_b64.append(encoded)
-                    print(
-                        f"[DEBUG] encoded image {local_path}, size={len(image_bytes)} bytes"
-                    )
+                data_url = _local_url_to_data_url(url)
+                if not data_url:
+                    continue
 
-            text_content = "\n\n".join(text_segments)
+                image_data_urls.append(data_url)
+            elif part.type == "text" and part.text:
+                text_segments.append(part.text)
+
+        content_parts: List[Dict[str, Any]] = []
+        for data_url in image_data_urls:
+            content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+
+        if text_segments:
+            text_payload = "\n\n".join(text_segments)
+            content_parts.append({"type": "text", "text": text_payload})
+
+        if content_parts:
+            message_dict["content"] = content_parts
         else:
-            text_content = ""
+            message_dict["content"] = ""
 
-        proxy_messages.append({"role": message.role, "content": text_content})
+        prepared.append(message_dict)
 
     print(
-        f"[DEBUG] prepared proxy messages model={model_name}, "
-        f"msg_count={len(proxy_messages)}, images={len(images_b64)}"
+        f"[DEBUG] prepared messages for model={model_name}, "
+        f"count={len(prepared)}"
     )
-    return proxy_messages, images_b64
+    return prepared
 
 
 # 非流式调用：直接把请求转发到 Ollama 并返回完整响应
@@ -298,28 +367,7 @@ async def _forward_non_streaming(
     payload: Dict[str, Any], timeout: httpx.Timeout
 ) -> Response:
     async with httpx.AsyncClient(timeout=timeout) as client:
-        # ===== DEBUG: check payload before sending to Ollama =====
-        try:
-            if isinstance(payload, dict):
-                if "images" in payload:
-                    imgs = payload["images"]
-                    print(
-                        f"[DEBUG] send_to_ollama model={payload.get('model')} images={len(imgs)}"
-                    )
-                    if imgs:
-                        print(
-                            f"[DEBUG] first_image_b64_len={len(imgs[0])} head={imgs[0][:80]}"
-                        )
-                else:
-                    print(
-                        f"[DEBUG] send_to_ollama model={payload.get('model')} images=0"
-                    )
-        except Exception as e:
-            print(f"[DEBUG] payload debug error: {e}")
-
-        # ===== DEBUG: save payload for manual inspection =====
-        import json, time, os
-
+        _log_payload_debug(payload)
         debug_path = f"/tmp/ollama_payload_{int(time.time())}.json"
         try:
             with open(debug_path, "w", encoding="utf-8") as f:
@@ -347,42 +395,15 @@ async def _forward_non_streaming(
 # 流式调用：保持流式连接，将 Ollama 的字节块原样转发给客户端
 async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
-    proxy_messages, images_b64 = build_proxy_messages_and_images(
-        request.messages, request.model
-    )
+    prepared_messages = prepare_messages_for_ollama(request.messages, request.model)
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = proxy_messages
+    request_dict["messages"] = prepared_messages
     request_dict["stream"] = True
-    if request.model in VL_MODELS and images_b64:
-        request_dict["images"] = images_b64
-    else:
-        request_dict.pop("images", None)
     ollama_payload = _build_ollama_payload(request_dict)
     timeout = httpx.Timeout(60.0, connect=10.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        # ===== DEBUG: check payload before sending to Ollama =====
-        try:
-            if isinstance(ollama_payload, dict):
-                if "images" in ollama_payload:
-                    imgs = ollama_payload["images"]
-                    print(
-                        f"[DEBUG] send_to_ollama model={ollama_payload.get('model')} images={len(imgs)}"
-                    )
-                    if imgs:
-                        print(
-                            f"[DEBUG] first_image_b64_len={len(imgs[0])} head={imgs[0][:80]}"
-                        )
-                else:
-                    print(
-                        f"[DEBUG] send_to_ollama model={ollama_payload.get('model')} images=0"
-                    )
-        except Exception as e:
-            print(f"[DEBUG] payload debug error: {e}")
-
-        # ===== DEBUG: save payload for manual inspection =====
-        import json, time, os
-
+        _log_payload_debug(ollama_payload)
         debug_path = f"/tmp/ollama_payload_{int(time.time())}.json"
         try:
             with open(debug_path, "w", encoding="utf-8") as f:
@@ -420,15 +441,9 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
-    proxy_messages, images_b64 = build_proxy_messages_and_images(
-        request.messages, request.model
-    )
+    prepared_messages = prepare_messages_for_ollama(request.messages, request.model)
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = proxy_messages
-    if request.model in VL_MODELS and images_b64:
-        request_dict["images"] = images_b64
-    else:
-        request_dict.pop("images", None)
+    request_dict["messages"] = prepared_messages
     # 将 OpenAI 风格请求转换成 Ollama 兼容格式
     ollama_payload = _build_ollama_payload(request_dict)
     # 定义客户端与 Ollama 交互的超时设置（60 秒响应、10 秒连接）
