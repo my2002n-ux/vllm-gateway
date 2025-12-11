@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -12,6 +13,14 @@ from pydantic import BaseModel
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://10.10.10.28:11434/api/chat")
 
 app = FastAPI(title="Ollama Chat Proxy", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Message 模型描述单条对话消息：
