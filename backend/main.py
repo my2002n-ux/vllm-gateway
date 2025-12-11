@@ -43,7 +43,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_tokens: Optional[int] = None
-    stream: bool = False
+    stream: bool = False  # 控制是否将结果以流式方式返回，默认保持一次性响应
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     stop: Optional[Union[str, List[str]]] = None
@@ -110,17 +110,24 @@ async def _forward_non_streaming(
 
 
 # 流式调用：保持流式连接，将 Ollama 的字节块原样转发给客户端
-async def _stream_from_ollama(
-    payload: Dict[str, Any], timeout: httpx.Timeout
-) -> StreamingResponse:
-    client = httpx.AsyncClient(timeout=timeout)
+async def proxy_stream_chat_completions(request: ChatCompletionRequest):
+    """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
+    request_dict = request.dict(exclude_none=True)
+    request_dict["messages"] = [
+        message.dict(exclude_none=True) for message in request.messages
+    ]
+    request_dict["stream"] = True
+    ollama_payload = _build_ollama_payload(request_dict)
+    timeout = httpx.Timeout(60.0, connect=10.0)
 
-    async def event_stream():
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            async with client.stream("POST", OLLAMA_URL, json=payload) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes():
-                    yield chunk
+            async with client.stream("POST", OLLAMA_URL, json=ollama_payload) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_lines():
+                    if not chunk.strip():
+                        continue
+                    yield f"{chunk}\n"
         except httpx.HTTPStatusError as exc:
             raise HTTPException(
                 status_code=exc.response.status_code,
@@ -131,15 +138,17 @@ async def _stream_from_ollama(
                 status_code=502,
                 detail=f"Failed to reach Ollama: {exc}",
             ) from exc
-        finally:
-            await client.aclose()
-
-    return StreamingResponse(event_stream(), media_type="application/json")
 
 
 # 兼容 OpenAI 的 /v1/chat/completions 路由，内部只负责代理转发
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
+    if request.stream:
+        # StreamingResponse 让客户端可以边接收边渲染，体验与 OpenAI 的流式协议一致
+        return StreamingResponse(
+            proxy_stream_chat_completions(request), media_type="application/json"
+        )
+
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
     request_dict = request.dict(exclude_none=True)
     request_dict["messages"] = [
@@ -151,8 +160,6 @@ async def chat_completions(request: ChatCompletionRequest):
     timeout = httpx.Timeout(60.0, connect=10.0)
 
     try:
-        if ollama_payload.get("stream"):
-            return await _stream_from_ollama(ollama_payload, timeout)
         return await _forward_non_streaming(ollama_payload, timeout)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
