@@ -41,6 +41,36 @@ class Message(BaseModel):
     class Config:
         extra = "allow"
 
+
+def normalize_messages_for_vl(messages: List[Message]) -> List[Dict[str, Any]]:
+    """将 Message 转成 OpenAI VL 标准的 content 数组格式。"""
+    normalized: List[Dict[str, Any]] = []
+
+    for msg in messages:
+        content = msg.content
+        parts: List[Dict[str, Any]] = []
+
+        if isinstance(content, str):
+            parts.append({"type": "text", "text": content})
+        elif isinstance(content, list):
+            for part in content:
+                if part.type == "text":
+                    parts.append({"type": "text", "text": part.text or ""})
+                elif part.type == "image_url" and part.image_url:
+                    url: Optional[str] = None
+                    if isinstance(part.image_url, str):
+                        url = part.image_url
+                    elif isinstance(part.image_url, dict):
+                        url = part.image_url.get("url") or part.image_url.get("data")
+                    if url:
+                        parts.append({"type": "image_url", "image_url": {"url": url}})
+        else:
+            parts.append({"type": "text", "text": ""})
+
+        normalized.append({"role": msg.role, "content": parts})
+
+    return normalized
+
 # 根路径重定向到 /docs
 from fastapi.responses import RedirectResponse
 
@@ -110,7 +140,7 @@ def prepare_messages_for_backend(request: ChatCompletionRequest) -> List[Dict[st
         total_images += len(images)
 
         if vl_mode:
-            prepared.append(message.dict(exclude_none=True))
+            continue
         else:
             message_dict = message.dict(exclude_none=True, exclude={"content"})
             message_dict["content"] = text
@@ -119,7 +149,17 @@ def prepare_messages_for_backend(request: ChatCompletionRequest) -> List[Dict[st
             prepared.append(message_dict)
 
     if vl_mode:
-        print(f"[DEBUG] call VL model={request.model}, images_count={total_images}")
+        vl_messages = normalize_messages_for_vl(request.messages)
+        print(
+            f"[DEBUG] incoming model={request.model}, stream={request.stream}, "
+            f"images_count={total_images}"
+        )
+        print(f"[DEBUG] call VL model={request.model}, msg_count={len(vl_messages)}")
+        if vl_messages:
+            print(f"[DEBUG] first vl message: {vl_messages[0]}")
+        else:
+            print("[DEBUG] first vl message: EMPTY")
+        return vl_messages
     else:
         if total_images:
             print(
