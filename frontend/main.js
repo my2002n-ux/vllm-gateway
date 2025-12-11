@@ -21,12 +21,13 @@ const imageInput = document.getElementById('image-input');
 const imagePreview = document.getElementById('image-preview');
 const imageSection = document.getElementById('image-section');
 const sendBtn = document.getElementById('send-btn');
-const stopBtn = document.getElementById('stop-btn');
 const chatArea = document.getElementById('chat-area');
 const statusTime = document.getElementById('status-time');
 const statusResult = document.getElementById('status-result');
-let selectedImages = [];
-let currentController = null; // currentController：配合停止按钮中断当前 fetch
+const MAX_IMAGES = 5;
+// uploadedImages：保存已上传图片的 URL，用于构造请求和渲染预览
+let uploadedImages = [];
+let currentController = null; // currentController：防止并发请求
 
 initModelSelect();
 updateImageSectionVisibility();
@@ -35,34 +36,36 @@ modelSelect.addEventListener('change', () => {
 });
 
 // 注册文件选择预览逻辑，支持多张图片预览（最多 5 张）
-imageInput.addEventListener('change', () => {
+imageInput.addEventListener('change', async () => {
   const files = Array.from(imageInput.files || []);
-  if (!files.length) {
-    selectedImages = [];
-    renderImagePreview([]);
+  if (!files.length) return;
+  const availableSlots = MAX_IMAGES - uploadedImages.length;
+  if (availableSlots <= 0) {
+    appendSystemMessage('已经有 5 张图片，如需继续请先删除部分图片。');
+    imageInput.value = '';
     return;
   }
-
-  if (files.length > 5) {
-    appendSystemMessage('最多支持上传 5 张图片，多出的已忽略');
+  const filesToProcess = files.slice(0, availableSlots);
+  if (files.length > availableSlots) {
+    console.log(`[INFO] 仅保留前 ${availableSlots} 张图片，其余已忽略`);
   }
 
-  selectedImages = files.slice(0, 5);
-  renderImagePreview(selectedImages);
+  for (const file of filesToProcess) {
+    try {
+      const url = await uploadImageAndGetUrl(file);
+      uploadedImages.push({ url });
+    } catch (err) {
+      console.error('上传图片失败', err);
+      appendSystemMessage(`上传图片失败：${err.message || '未知错误'}`);
+    }
+  }
+  renderImagePreview();
+  imageInput.value = '';
 });
 
 // 点击发送后处理一次完整的多模态请求
 sendBtn.addEventListener('click', () => {
   handleSend().catch((err) => console.error('发送失败', err));
-});
-
-// 点击停止按钮时终止当前流式请求
-stopBtn.addEventListener('click', () => {
-  if (!currentController) return;
-  currentController.abort();
-  currentController = null;
-  updateButtonsDuringRequest(false);
-  setStatusResult('已停止', null);
 });
 
 // 初始化模型下拉框，后续可改为 fetch 后端接口
@@ -97,9 +100,9 @@ function updateImageSectionVisibility() {
     imageSection.style.display = 'flex';
   } else {
     imageSection.style.display = 'none';
-    selectedImages = [];
+    uploadedImages = [];
     imageInput.value = '';
-    renderImagePreview([]);
+    renderImagePreview();
   }
 }
 
@@ -112,8 +115,10 @@ async function handleSend() {
   }
 
   const text = promptInput.value.trim();
-  const imageFiles = selectedImages;
-  if (!text && imageFiles.length === 0) {
+  const modelSupportsImage = supportsImage(modelSelect.value);
+  // imageUrls：基于 imageList 数组生成的最终 URL 列表，稍后会注入 messages content 中
+  const imageUrls = modelSupportsImage ? uploadedImages.map((item) => item.url) : [];
+  if (!text && imageUrls.length === 0) {
     alert('请输入提示词或选择一张图片。');
     return;
   }
@@ -131,23 +136,17 @@ async function handleSend() {
   const usageHolder = { data: null };
 
   try {
-    const previewDataUrls = imageFiles.length
-      ? await Promise.all(imageFiles.map((file) => readFileAsDataURL(file)))
-      : [];
-    const modelSupportsImage = supportsImage(selectedModel);
-
     if (!modelSupportsImage && !text) {
       throw new Error('当前模型不支持图片，且没有可发送的文本。');
     }
 
-    const selectedImageDataUrls = modelSupportsImage ? previewDataUrls : [];
-    const messages = buildMessages(systemInput.value.trim(), text, selectedImageDataUrls);
+    const messages = buildMessages(systemInput.value.trim(), text, imageUrls);
     const payload = buildPayload(messages, selectedModel);
     console.log('payload', payload); // 方便在浏览器中检查最终请求体结构
 
     appendUserMessage(
-      text || (previewDataUrls.length ? '（仅发送图片）' : ''),
-      previewDataUrls,
+      text || (imageUrls.length ? '（仅发送图片）' : ''),
+      imageUrls,
       requestTimeText,
     );
     assistantMsg = appendAssistantMessage(requestTimeText, selectedModel);
@@ -257,22 +256,24 @@ function buildPayload(messages, modelName) {
   return payload;
 }
 
-// 按 OpenAI 多模态标准构建 messages：content 为 text/image_url 组成的数组
-function buildMessages(systemText, text, imageDataUrls) {
+// 按 OpenAI 多模态标准构建 messages：图片 content 段在前，文本在后
+function buildMessages(systemText, text, imageUrls) {
   const messages = [];
   if (systemText) {
     messages.push({ role: 'system', content: systemText });
   }
 
   const contents = [];
-  if (text) {
-    contents.push({ type: 'text', text });
-  }
-  for (const dataUrl of imageDataUrls) {
+  // 将 imageList 中的 URL 转成 image_url 片段，保持顺序
+  for (const url of imageUrls) {
     contents.push({
       type: 'image_url',
-      image_url: { url: dataUrl }, // image_url 必须是 { url: ... } 对象
+      image_url: { url },
     });
+  }
+
+  if (text) {
+    contents.push({ type: 'text', text });
   }
 
   if (!contents.length) {
@@ -293,6 +294,12 @@ function readFileAsDataURL(file) {
   });
 }
 
+// 上传图片并返回可用于 image_url 的地址；此处沿用数据 URL 方案
+async function uploadImageAndGetUrl(file) {
+  const dataUrl = await readFileAsDataURL(file);
+  return dataUrl;
+}
+
 // 请求地址统一处理一下，避免重复斜杠
 function buildRequestUrl() {
   let base = backendInput.value.trim();
@@ -305,23 +312,33 @@ function buildRequestUrl() {
   return `${base}/v1/chat/completions`;
 }
 
-// 渲染左侧调试区的图片预览，支持多张图显示
-function renderImagePreview(files) {
+// 渲染左侧调试区的图片预览，配合 imageList 数组展示和删除
+function renderImagePreview() {
   imagePreview.innerHTML = '';
-  if (!files.length) {
+  if (!uploadedImages.length) {
     imagePreview.style.display = 'none';
     return;
   }
   imagePreview.style.display = 'grid';
-  files.forEach((file) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = document.createElement('img');
-      img.src = event.target.result;
-      imagePreview.appendChild(img);
-    };
-    reader.readAsDataURL(file);
+  uploadedImages.forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'preview-card';
+    const img = document.createElement('img');
+    img.src = item.url;
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'preview-remove';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', () => removeImageAt(index));
+    card.appendChild(img);
+    card.appendChild(removeBtn);
+    imagePreview.appendChild(card);
   });
+}
+
+// 删除缩略图时同步 imageList，并刷新 UI
+function removeImageAt(index) {
+  uploadedImages.splice(index, 1);
+  renderImagePreview();
 }
 
 // 在聊天区域添加一条用户消息气泡
@@ -594,8 +611,7 @@ function autoScroll() {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
-// 控制发送/停止按钮的启用状态
+// 控制发送按钮的启用状态，避免重复提交
 function updateButtonsDuringRequest(inProgress) {
   sendBtn.disabled = inProgress;
-  stopBtn.disabled = !inProgress;
 }
