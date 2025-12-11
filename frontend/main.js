@@ -24,6 +24,9 @@ const sendBtn = document.getElementById('send-btn');
 const chatArea = document.getElementById('chat-area');
 const statusTime = document.getElementById('status-time');
 const statusResult = document.getElementById('status-result');
+const imgViewerOverlay = document.getElementById('img-viewer-overlay');
+const imgViewerImg = document.getElementById('img-viewer-img');
+const imgViewerClose = document.getElementById('img-viewer-close');
 const MAX_IMAGES = 5;
 // selectedImages：记录当前选中的图片（含 dataURL），用于预览和构造请求
 let selectedImages = [];
@@ -350,6 +353,7 @@ function appendUserMessage(text, imageDataUrls, timeText) {
     imageDataUrls.forEach((url) => {
       const img = document.createElement('img');
       img.src = url;
+      img.className = 'chat-img';
       grid.appendChild(img);
     });
     bubble.appendChild(grid);
@@ -607,4 +611,21 @@ function autoScroll() {
 // 控制发送按钮的启用状态，避免重复提交
 function updateButtonsDuringRequest(inProgress) {
   sendBtn.disabled = inProgress;
+}
+
+// 聊天内容图片点击查看大图
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (target.tagName === 'IMG' && target.classList.contains('chat-img')) {
+    if (!imgViewerOverlay || !imgViewerImg) return;
+    imgViewerImg.src = target.src;
+    imgViewerOverlay.style.display = 'flex';
+  }
+});
+
+if (imgViewerClose) {
+  imgViewerClose.addEventListener('click', () => {
+    imgViewerOverlay.style.display = 'none';
+    imgViewerImg.src = '';
+  });
 }
