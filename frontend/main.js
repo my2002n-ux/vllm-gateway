@@ -614,13 +614,14 @@ function updateButtonsDuringRequest(inProgress) {
 }
 
 // 聊天内容图片点击查看大图
-document.addEventListener('click', (event) => {
+chatArea.addEventListener('click', (event) => {
   const target = event.target;
-  if (target.tagName === 'IMG' && target.classList.contains('chat-img')) {
-    if (!imgViewerOverlay || !imgViewerImg) return;
-    imgViewerImg.src = target.src;
-    imgViewerOverlay.style.display = 'flex';
+  if (target.tagName !== 'IMG') {
+    return;
   }
+  if (!imgViewerOverlay || !imgViewerImg) return;
+  imgViewerImg.src = target.src;
+  imgViewerOverlay.style.display = 'flex';
 });
 
 if (imgViewerClose) {
