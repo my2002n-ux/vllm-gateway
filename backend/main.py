@@ -54,36 +54,6 @@ class Message(BaseModel):
     class Config:
         extra = "allow"
 
-
-def normalize_messages_for_vl(messages: List[Message]) -> List[Dict[str, Any]]:
-    """将 Message 转成 OpenAI VL 标准的 content 数组格式。"""
-    normalized: List[Dict[str, Any]] = []
-
-    for msg in messages:
-        content = msg.content
-        parts: List[Dict[str, Any]] = []
-
-        if isinstance(content, str):
-            parts.append({"type": "text", "text": content})
-        elif isinstance(content, list):
-            for part in content:
-                if part.type == "text":
-                    parts.append({"type": "text", "text": part.text or ""})
-                elif part.type == "image_url" and part.image_url:
-                    url: Optional[str] = None
-                    if isinstance(part.image_url, str):
-                        url = part.image_url
-                    elif isinstance(part.image_url, dict):
-                        url = part.image_url.get("url") or part.image_url.get("data")
-                    if url:
-                        parts.append({"type": "image_url", "image_url": {"url": url}})
-        else:
-            parts.append({"type": "text", "text": ""})
-
-        normalized.append({"role": msg.role, "content": parts})
-
-    return normalized
-
 # 根路径重定向到 /docs
 from fastapi.responses import RedirectResponse
 
@@ -196,88 +166,6 @@ def replace_dataurls_with_local_files(messages: List[Message]) -> int:
     return saved
 
 
-def extract_text_and_images(message: Message) -> Tuple[str, List[str]]:
-    """拆解一条 message，返回拼接后的文本和图片 URL 列表。"""
-    text_segments: List[str] = []
-    images: List[str] = []
-    content = message.content
-
-    if isinstance(content, str) and content:
-        text_segments.append(content)
-    elif isinstance(content, list):
-        for part in content:
-            if part.type == "text" and part.text:
-                text_segments.append(part.text)
-            elif part.type == "image_url" and part.image_url:
-                url = None
-                if isinstance(part.image_url, dict):
-                    url = part.image_url.get("url") or part.image_url.get("data")
-                if isinstance(url, str):
-                    images.append(url)
-
-    text = "\n\n".join(text_segments)
-
-    # 调试日志：记录每条消息解析出来的文本长度和图片数量
-    print(
-        f"[DEBUG] extract_text_and_images role={message.role}, "
-        f"text_len={len(text)}, images_count={len(images)}"
-    )
-    if images:
-        print("[DEBUG] first_image_prefix=", images[0][:60])
-
-    return text, images
-
-
-def prepare_messages_for_backend(
-    request: ChatCompletionRequest,
-) -> Tuple[List[Dict[str, Any]], bool]:
-    """根据是否携带图片决定调用纯文本路径还是 VL 路径。"""
-    text_messages: List[Dict[str, Any]] = []
-    has_image = False
-    total_images = 0
-
-    for message in request.messages:
-        text, images = extract_text_and_images(message)
-        if images:
-            has_image = True
-            total_images += len(images)
-
-        message_dict = message.dict(exclude_none=True, exclude={"content"})
-        message_dict["content"] = text
-        if images:
-            message_dict["images"] = images
-        text_messages.append(message_dict)
-
-    if not has_image:
-        print(f"[DEBUG] has_image=False, use text-only path, model={request.model}")
-        return text_messages, False
-
-    if request.model not in VL_MODELS:
-        print(
-            f"[WARN] model {request.model} received {total_images} images but model is not VL"
-        )
-        return text_messages, True
-
-    saved_images = replace_dataurls_with_local_files(request.messages)
-    if saved_images:
-        print(f"[DEBUG] data URLs persisted for {saved_images} image(s)")
-
-    print(
-        f"[DEBUG] VL request model={request.model}, msg_count={len(request.messages)}, "
-        f"images={total_images}"
-    )
-    vl_messages = normalize_messages_for_vl(request.messages)
-    print(
-        f"[DEBUG] has_image=True, use VL path, model={request.model}, "
-        f"msg_count={len(vl_messages)}, images={total_images}"
-    )
-    if vl_messages:
-        print(f"[DEBUG] first vl message: {vl_messages[0]}")
-    else:
-        print("[DEBUG] first vl message: EMPTY")
-    return vl_messages, True
-
-
 # 将 OpenAI 风格的请求转换成 Ollama /api/chat 接口所需的字段
 def _build_ollama_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Translate the OpenAI-style payload into an Ollama chat request."""
@@ -311,7 +199,96 @@ def _build_ollama_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if options:
         ollama_payload["options"] = options
 
+    images = payload.get("images")
+    if images:
+        ollama_payload["images"] = images
+
     return ollama_payload
+
+
+def build_proxy_messages_and_images(
+    messages: List[Message], model_name: str
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    将 OpenAI 风格的 content 结构拆成纯文本消息和本地图片 base64。
+    对于 VL 模型，需要把前端传入的图片 URL 映射到本地文件，再转成 base64 字符串发送给 Ollama。
+    非 VL 模型忽略图片，仅拼接文本，避免让不支持的模型报错。
+    """
+    proxy_messages: List[Dict[str, Any]] = []
+    images_b64: List[str] = []
+    is_vl_model = model_name in VL_MODELS
+
+    if is_vl_model:
+        saved_images = replace_dataurls_with_local_files(messages)
+        if saved_images:
+            print(f"[DEBUG] data URLs persisted for {saved_images} image(s)")
+    else:
+        print(f"[DEBUG] model {model_name} not in VL_MODELS, image parts will be ignored")
+
+    for message in messages:
+        text_segments: List[str] = []
+        content = message.content
+
+        if isinstance(content, str):
+            text_content = content
+        elif isinstance(content, list):
+            for part in content:
+                if part.type == "text":
+                    if part.text:
+                        text_segments.append(part.text)
+                elif part.type == "image_url":
+                    if not is_vl_model:
+                        print(
+                            f"[WARN] ignore image for non-VL model {model_name}, role={message.role}"
+                        )
+                        continue
+
+                    image_field = part.image_url
+                    url: Optional[str] = None
+                    if isinstance(image_field, dict):
+                        url = image_field.get("url") or image_field.get("data")
+                    elif isinstance(image_field, str):
+                        url = image_field
+
+                    if not url:
+                        print("[WARN] image_url part missing url field, skip")
+                        continue
+
+                    if not url.startswith(IMAGE_BASE_URL):
+                        print(f"[WARN] skip external image url: {url}")
+                        continue
+
+                    filename = os.path.basename(url)
+                    local_path = os.path.join(IMAGE_DIR, filename)
+                    try:
+                        with open(local_path, "rb") as f:
+                            image_bytes = f.read()
+                    except OSError as exc:
+                        print(f"[ERROR] cannot read image file {local_path}: {exc}")
+                        continue
+
+                    try:
+                        encoded = base64.b64encode(image_bytes).decode("utf-8")
+                    except Exception as exc:
+                        print(f"[ERROR] failed to base64 encode {local_path}: {exc}")
+                        continue
+
+                    images_b64.append(encoded)
+                    print(
+                        f"[DEBUG] encoded image {local_path}, size={len(image_bytes)} bytes"
+                    )
+
+            text_content = "\n\n".join(text_segments)
+        else:
+            text_content = ""
+
+        proxy_messages.append({"role": message.role, "content": text_content})
+
+    print(
+        f"[DEBUG] prepared proxy messages model={model_name}, "
+        f"msg_count={len(proxy_messages)}, images={len(images_b64)}"
+    )
+    return proxy_messages, images_b64
 
 
 # 非流式调用：直接把请求转发到 Ollama 并返回完整响应
@@ -338,10 +315,16 @@ async def _forward_non_streaming(
 # 流式调用：保持流式连接，将 Ollama 的字节块原样转发给客户端
 async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
+    proxy_messages, images_b64 = build_proxy_messages_and_images(
+        request.messages, request.model
+    )
     request_dict = request.dict(exclude_none=True)
-    prepared_messages, _ = prepare_messages_for_backend(request)
-    request_dict["messages"] = prepared_messages
+    request_dict["messages"] = proxy_messages
     request_dict["stream"] = True
+    if request.model in VL_MODELS and images_b64:
+        request_dict["images"] = images_b64
+    else:
+        request_dict.pop("images", None)
     ollama_payload = _build_ollama_payload(request_dict)
     timeout = httpx.Timeout(60.0, connect=10.0)
 
@@ -375,9 +358,15 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
+    proxy_messages, images_b64 = build_proxy_messages_and_images(
+        request.messages, request.model
+    )
     request_dict = request.dict(exclude_none=True)
-    prepared_messages, _ = prepare_messages_for_backend(request)
-    request_dict["messages"] = prepared_messages
+    request_dict["messages"] = proxy_messages
+    if request.model in VL_MODELS and images_b64:
+        request_dict["images"] = images_b64
+    else:
+        request_dict.pop("images", None)
     # 将 OpenAI 风格请求转换成 Ollama 兼容格式
     ollama_payload = _build_ollama_payload(request_dict)
     # 定义客户端与 Ollama 交互的超时设置（60 秒响应、10 秒连接）
