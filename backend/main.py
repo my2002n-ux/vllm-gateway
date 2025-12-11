@@ -248,24 +248,7 @@ def _log_payload_debug(payload: Dict[str, Any]) -> None:
         for msg in payload.get("messages", []):
             msg_info: Dict[str, Any] = {"role": msg.get("role")}
             content = msg.get("content")
-            if isinstance(content, list):
-                parts_info: List[Dict[str, Any]] = []
-                for part in content:
-                    part_type = part.get("type")
-                    if part_type == "image_url":
-                        url = (
-                            part.get("image_url", {}).get("url")
-                            if isinstance(part.get("image_url"), dict)
-                            else None
-                        )
-                        parts_info.append(
-                            {"type": "image_url", "length": len(url) if isinstance(url, str) else 0}
-                        )
-                    elif part_type == "text":
-                        text = part.get("text") or ""
-                        parts_info.append({"type": "text", "text_len": len(text)})
-                msg_info["content"] = parts_info
-            elif isinstance(content, str):
+            if isinstance(content, str):
                 msg_info["content_len"] = len(content)
             summary["messages"].append(msg_info)
 
@@ -274,13 +257,9 @@ def _log_payload_debug(payload: Dict[str, Any]) -> None:
         print(f"[DEBUG] payload summary error: {exc}")
 
 
-def prepare_messages_for_ollama(
-    messages: List[Message], model_name: str
-) -> List[Dict[str, Any]]:
+def build_ollama_messages(messages: List[Message], model_name: str) -> List[Dict[str, Any]]:
     """
-    构造最终发送给 Ollama 的消息：
-    - 对 VL 模型，将本地图片转换成 data URL，并以前置 image_url + 末尾文本的结构拼装 content 数组；
-    - 对纯文本模型，只拼接文本，忽略图片，避免请求出错。
+    将 OpenAI 风格 messages/content 数组转换为 Ollama 所需的字符串 content（支持 <image:base64> 标记）。
     """
     prepared: List[Dict[str, Any]] = []
     is_vl_model = model_name in VL_MODELS
@@ -293,27 +272,21 @@ def prepare_messages_for_ollama(
         print(f"[DEBUG] model {model_name} not in VL_MODELS, image parts will be ignored")
 
     for message in messages:
-        message_dict = message.dict(exclude_none=True, exclude={"content"})
         content = message.content
-
         if isinstance(content, str) or content is None:
-            message_dict["content"] = content or ""
-            prepared.append(message_dict)
+            prepared.append({"role": message.role, "content": content or ""})
             continue
 
         if not isinstance(content, list):
-            message_dict["content"] = ""
-            prepared.append(message_dict)
+            prepared.append({"role": message.role, "content": ""})
             continue
 
         if not is_vl_model:
             text_segments = [part.text for part in content if part.type == "text" and part.text]
-            message_dict["content"] = "\n\n".join(text_segments)
-            prepared.append(message_dict)
+            prepared.append({"role": message.role, "content": "\n\n".join(text_segments)})
             continue
 
-        image_data_urls: List[str] = []
-        text_segments: List[str] = []
+        parts: List[str] = []
         for part in content:
             if part.type == "image_url" and part.image_url:
                 image_field = part.image_url
@@ -336,29 +309,14 @@ def prepare_messages_for_ollama(
                 if not data_url:
                     continue
 
-                image_data_urls.append(data_url)
+                # Ollama 读取 <image:base64> 标记后即可识别对应图片
+                parts.append(f"<image:{data_url}>")
             elif part.type == "text" and part.text:
-                text_segments.append(part.text)
+                parts.append(part.text)
 
-        content_parts: List[Dict[str, Any]] = []
-        for data_url in image_data_urls:
-            content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        prepared.append({"role": message.role, "content": "\n".join(parts)})
 
-        if text_segments:
-            text_payload = "\n\n".join(text_segments)
-            content_parts.append({"type": "text", "text": text_payload})
-
-        if content_parts:
-            message_dict["content"] = content_parts
-        else:
-            message_dict["content"] = ""
-
-        prepared.append(message_dict)
-
-    print(
-        f"[DEBUG] prepared messages for model={model_name}, "
-        f"count={len(prepared)}"
-    )
+    print(f"[DEBUG] prepared textual messages for model={model_name}, count={len(prepared)}")
     return prepared
 
 
@@ -395,7 +353,7 @@ async def _forward_non_streaming(
 # 流式调用：保持流式连接，将 Ollama 的字节块原样转发给客户端
 async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
-    prepared_messages = prepare_messages_for_ollama(request.messages, request.model)
+    prepared_messages = build_ollama_messages(request.messages, request.model)
     request_dict = request.dict(exclude_none=True)
     request_dict["messages"] = prepared_messages
     request_dict["stream"] = True
@@ -441,7 +399,7 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
-    prepared_messages = prepare_messages_for_ollama(request.messages, request.model)
+    prepared_messages = build_ollama_messages(request.messages, request.model)
     request_dict = request.dict(exclude_none=True)
     request_dict["messages"] = prepared_messages
     # 将 OpenAI 风格请求转换成 Ollama 兼容格式
