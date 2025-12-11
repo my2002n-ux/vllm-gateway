@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union, Literal
@@ -296,6 +298,36 @@ async def _forward_non_streaming(
     payload: Dict[str, Any], timeout: httpx.Timeout
 ) -> Response:
     async with httpx.AsyncClient(timeout=timeout) as client:
+        # ===== DEBUG: check payload before sending to Ollama =====
+        try:
+            if isinstance(payload, dict):
+                if "images" in payload:
+                    imgs = payload["images"]
+                    print(
+                        f"[DEBUG] send_to_ollama model={payload.get('model')} images={len(imgs)}"
+                    )
+                    if imgs:
+                        print(
+                            f"[DEBUG] first_image_b64_len={len(imgs[0])} head={imgs[0][:80]}"
+                        )
+                else:
+                    print(
+                        f"[DEBUG] send_to_ollama model={payload.get('model')} images=0"
+                    )
+        except Exception as e:
+            print(f"[DEBUG] payload debug error: {e}")
+
+        # ===== DEBUG: save payload for manual inspection =====
+        import json, time, os
+
+        debug_path = f"/tmp/ollama_payload_{int(time.time())}.json"
+        try:
+            with open(debug_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            print(f"[DEBUG] saved payload to {debug_path}")
+        except Exception as e:
+            print(f"[DEBUG] failed to save payload: {e}")
+
         # 使用 httpx POST 请求调用 Ollama，timeout 控制整体和连接超时
         response = await client.post(OLLAMA_URL, json=payload)
         try:
@@ -329,6 +361,36 @@ async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     timeout = httpx.Timeout(60.0, connect=10.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
+        # ===== DEBUG: check payload before sending to Ollama =====
+        try:
+            if isinstance(ollama_payload, dict):
+                if "images" in ollama_payload:
+                    imgs = ollama_payload["images"]
+                    print(
+                        f"[DEBUG] send_to_ollama model={ollama_payload.get('model')} images={len(imgs)}"
+                    )
+                    if imgs:
+                        print(
+                            f"[DEBUG] first_image_b64_len={len(imgs[0])} head={imgs[0][:80]}"
+                        )
+                else:
+                    print(
+                        f"[DEBUG] send_to_ollama model={ollama_payload.get('model')} images=0"
+                    )
+        except Exception as e:
+            print(f"[DEBUG] payload debug error: {e}")
+
+        # ===== DEBUG: save payload for manual inspection =====
+        import json, time, os
+
+        debug_path = f"/tmp/ollama_payload_{int(time.time())}.json"
+        try:
+            with open(debug_path, "w", encoding="utf-8") as f:
+                json.dump(ollama_payload, f, ensure_ascii=False)
+            print(f"[DEBUG] saved payload to {debug_path}")
+        except Exception as e:
+            print(f"[DEBUG] failed to save payload: {e}")
+
         try:
             async with client.stream("POST", OLLAMA_URL, json=ollama_payload) as resp:
                 resp.raise_for_status()
