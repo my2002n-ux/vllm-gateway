@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
-import mimetypes
 import os
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union, Literal
+from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -95,22 +94,36 @@ def _extension_from_mime(mime_type: str) -> str:
     return _MIME_EXTENSIONS.get(mime_type.lower(), ".png")
 
 
-def _save_data_url_image(data_url: str) -> Optional[str]:
+def _parse_data_url(data_url: str) -> Optional[Tuple[str, str]]:
     if not data_url.startswith("data:image"):
         return None
-
     try:
         header, b64_data = data_url.split(",", 1)
     except ValueError:
         print(f"[WARN] invalid data URL, missing comma separator: {data_url[:40]}")
         return None
-
     if not header.startswith("data:"):
         print(f"[WARN] invalid data URL header: {header}")
         return None
-
     meta = header[len("data:") :]
     mime_type = meta.split(";")[0] if ";" in meta else meta
+    return mime_type, b64_data
+
+
+def _extract_base64_from_data_url(data_url: str) -> Optional[str]:
+    parsed = _parse_data_url(data_url)
+    if not parsed:
+        return None
+    _, b64_data = parsed
+    print(f"[DEBUG] extracted data URL base64 length: {len(b64_data)}")
+    return b64_data
+
+
+def _save_data_url_image(data_url: str) -> Optional[str]:
+    parsed = _parse_data_url(data_url)
+    if not parsed:
+        return None
+    mime_type, b64_data = parsed
     extension = _extension_from_mime(mime_type)
 
     try:
@@ -136,41 +149,7 @@ def _save_data_url_image(data_url: str) -> Optional[str]:
     return file_url
 
 
-def replace_dataurls_with_local_files(messages: List[Message]) -> int:
-    saved = 0
-    for message in messages:
-        content = message.content
-        if not isinstance(content, list):
-            continue
-
-        for part in content:
-            if part.type != "image_url" or not part.image_url:
-                continue
-
-            url: Optional[str] = None
-            image_field = part.image_url
-            if isinstance(image_field, dict):
-                url = image_field.get("url") or image_field.get("data")
-            elif isinstance(image_field, str):
-                url = image_field
-
-            if not isinstance(url, str) or not url.startswith("data:image"):
-                continue
-
-            file_url = _save_data_url_image(url)
-            if not file_url:
-                continue
-
-            saved += 1
-            if isinstance(image_field, dict):
-                image_field["url"] = file_url
-                image_field.pop("data", None)
-            else:
-                part.image_url = {"url": file_url}
-    return saved
-
-
-def _local_url_to_data_url(url: str) -> Optional[str]:
+def _local_url_to_base64(url: str) -> Optional[str]:
     if not url.startswith(IMAGE_BASE_URL):
         print(f"[WARN] skip external image url: {url}")
         return None
@@ -180,10 +159,6 @@ def _local_url_to_data_url(url: str) -> Optional[str]:
     if not os.path.exists(local_path):
         print(f"[ERROR] local image path not found: {local_path}")
         return None
-
-    mime_type, _ = mimetypes.guess_type(local_path)
-    if not mime_type:
-        mime_type = "image/png"
 
     try:
         with open(local_path, "rb") as f:
@@ -199,7 +174,7 @@ def _local_url_to_data_url(url: str) -> Optional[str]:
         return None
 
     print(f"[DEBUG] encoded base64 length: {len(encoded)} for {local_path}")
-    return f"data:{mime_type};base64,{encoded}"
+    return encoded
 
 
 # 将 OpenAI 风格的请求转换成 Ollama /api/chat 接口所需的字段
@@ -240,55 +215,50 @@ def _build_ollama_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _log_payload_debug(payload: Dict[str, Any]) -> None:
     try:
-        summary: Dict[str, Any] = {
-            "model": payload.get("model"),
-            "stream": payload.get("stream"),
-            "messages": [],
-        }
-        for msg in payload.get("messages", []):
-            msg_info: Dict[str, Any] = {"role": msg.get("role")}
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg_info["content_len"] = len(content)
-            summary["messages"].append(msg_info)
-
-        print(f"[DEBUG] final payload sent to Ollama: {json.dumps(summary, ensure_ascii=False)}")
+        serialized = json.dumps(payload, ensure_ascii=False)
+        print(f"[DEBUG] final payload sent to Ollama: {serialized[:500]}")
     except Exception as exc:
         print(f"[DEBUG] payload summary error: {exc}")
 
 
 def build_ollama_messages(messages: List[Message], model_name: str) -> List[Dict[str, Any]]:
     """
-    将 OpenAI 风格 messages/content 数组转换为 Ollama 所需的字符串 content（支持 <image:base64> 标记）。
+    将 OpenAI 风格 messages/content 数组转换为 Ollama 所需的纯文本 content，
+    并在每条消息上附加 images(base64) 以匹配 Ollama 的多模态输入格式。
     """
     prepared: List[Dict[str, Any]] = []
     is_vl_model = model_name in VL_MODELS
 
-    if is_vl_model:
-        saved_images = replace_dataurls_with_local_files(messages)
-        if saved_images:
-            print(f"[DEBUG] data URLs persisted for {saved_images} image(s)")
-    else:
+    if not is_vl_model:
         print(f"[DEBUG] model {model_name} not in VL_MODELS, image parts will be ignored")
 
     for message in messages:
         content = message.content
         if isinstance(content, str) or content is None:
-            prepared.append({"role": message.role, "content": content or ""})
+            payload = {"role": message.role, "content": content or ""}
+            if message.name:
+                payload["name"] = message.name
+            prepared.append(payload)
             continue
 
         if not isinstance(content, list):
-            prepared.append({"role": message.role, "content": ""})
+            payload = {"role": message.role, "content": ""}
+            if message.name:
+                payload["name"] = message.name
+            prepared.append(payload)
             continue
 
-        if not is_vl_model:
-            text_segments = [part.text for part in content if part.type == "text" and part.text]
-            prepared.append({"role": message.role, "content": "\n\n".join(text_segments)})
-            continue
-
-        parts: List[str] = []
+        text_segments: List[str] = []
+        images_b64: List[str] = []
         for part in content:
-            if part.type == "image_url" and part.image_url:
+            if part.type == "text" and part.text:
+                text_segments.append(part.text)
+            elif part.type == "image_url" and part.image_url:
+                if not is_vl_model:
+                    print(
+                        f"[WARN] ignore image for non-VL model {model_name}, role={message.role}"
+                    )
+                    continue
                 image_field = part.image_url
                 url: Optional[str] = None
                 if isinstance(image_field, dict):
@@ -300,21 +270,31 @@ def build_ollama_messages(messages: List[Message], model_name: str) -> List[Dict
                     print("[WARN] image_url part missing url field, skip")
                     continue
 
+                b64_data: Optional[str] = None
                 if url.startswith("data:image"):
-                    local_url = _save_data_url_image(url)
-                    if local_url:
-                        url = local_url
+                    b64_data = _extract_base64_from_data_url(url)
+                    saved_url = _save_data_url_image(url)
+                    if saved_url and isinstance(image_field, dict):
+                        image_field["url"] = saved_url
+                        image_field.pop("data", None)
+                else:
+                    b64_data = _local_url_to_base64(url)
 
-                data_url = _local_url_to_data_url(url)
-                if not data_url:
+                if not b64_data:
                     continue
 
-                # Ollama 读取 <image:base64> 标记后即可识别对应图片
-                parts.append(f"<image:{data_url}>")
-            elif part.type == "text" and part.text:
-                parts.append(part.text)
+                images_b64.append(b64_data)
 
-        prepared.append({"role": message.role, "content": "\n".join(parts)})
+        message_payload: Dict[str, Any] = {
+            "role": message.role,
+            "content": "\n\n".join(text_segments),
+        }
+        if message.name:
+            message_payload["name"] = message.name
+        if images_b64:
+            message_payload["images"] = images_b64
+
+        prepared.append(message_payload)
 
     print(f"[DEBUG] prepared textual messages for model={model_name}, count={len(prepared)}")
     return prepared
