@@ -1,11 +1,14 @@
-// 预定义模型列表，后续可以替换为后端接口返回
-const DEFAULT_MODELS = [
+// 预定义模型列表（前端写死，后续可根据需求调整顺序/内容）
+const MODEL_OPTIONS = [
+  'qwen3:32b',
+  'gemma3:27b',
+  'qwen3-vl:32b',
+  'gpt-oss:120b',
   'qwen3:30b',
-  'qwen-vl',
-  'qwen2:7b',
-  'llama3.1',
-  'glm-4',
 ];
+
+// IMAGE_MODELS：显式支持图片的模型名单，新增多模态模型时可扩展
+const IMAGE_MODELS = ['qwen3-vl:32b', 'gemma3:27b'];
 
 // 获取调试区和内容区的各类元素
 const backendInput = document.getElementById('backend-input');
@@ -13,7 +16,6 @@ const modelSelect = document.getElementById('model-select');
 const systemInput = document.getElementById('system-input');
 const temperatureInput = document.getElementById('temperature-input');
 const maxTokensInput = document.getElementById('max-tokens-input');
-const thinkingToggle = document.getElementById('thinking-toggle');
 const promptInput = document.getElementById('prompt-input');
 const imageInput = document.getElementById('image-input');
 const imagePreview = document.getElementById('image-preview');
@@ -21,24 +23,25 @@ const sendBtn = document.getElementById('send-btn');
 const chatArea = document.getElementById('chat-area');
 const statusTime = document.getElementById('status-time');
 const statusResult = document.getElementById('status-result');
+let selectedImages = [];
 
 initModelSelect();
 
-// 注册文件选择预览逻辑，方便查看缩略图
+// 注册文件选择预览逻辑，支持多张图片预览（最多 5 张）
 imageInput.addEventListener('change', () => {
-  const file = imageInput.files[0];
-  if (!file) {
-    imagePreview.style.display = 'none';
-    imagePreview.src = '';
+  const files = Array.from(imageInput.files || []);
+  if (!files.length) {
+    selectedImages = [];
+    renderImagePreview([]);
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    imagePreview.src = event.target.result;
-    imagePreview.style.display = 'block';
-  };
-  reader.readAsDataURL(file);
+  if (files.length > 5) {
+    appendSystemMessage('最多支持上传 5 张图片，多出的已忽略');
+  }
+
+  selectedImages = files.slice(0, 5);
+  renderImagePreview(selectedImages);
 });
 
 // 点击发送后处理一次完整的多模态请求
@@ -49,35 +52,70 @@ sendBtn.addEventListener('click', () => {
 // 初始化模型下拉框，后续可改为 fetch 后端接口
 function initModelSelect() {
   modelSelect.innerHTML = '';
-  DEFAULT_MODELS.forEach((model) => {
+  MODEL_OPTIONS.forEach((model) => {
     const option = document.createElement('option');
     option.value = model;
     option.textContent = model;
     modelSelect.appendChild(option);
   });
-  modelSelect.value = DEFAULT_MODELS[0];
+  modelSelect.value = MODEL_OPTIONS[0];
+}
+
+// 判断模型是否支持图片：白名单优先，其次根据名称包含关键字判断
+function supportsImage(modelName) {
+  if (!modelName) return false;
+  if (IMAGE_MODELS.includes(modelName)) {
+    return true;
+  }
+  const lower = modelName.toLowerCase();
+  if (lower.includes('vl') || lower.includes('vision')) {
+    return true;
+  }
+  return false;
 }
 
 // 处理发送逻辑：读取输入、构造 payload、流式解析响应
 async function handleSend() {
   const text = promptInput.value.trim();
-  const imageFile = imageInput.files[0];
-  if (!text && !imageFile) {
+  const imageFiles = selectedImages;
+  if (!text && imageFiles.length === 0) {
     alert('请输入提示词或选择一张图片。');
     return;
   }
+
+  const requestTime = new Date();
+  const requestTimeText = formatTimestamp(requestTime);
+  const selectedModel = modelSelect.value;
 
   sendBtn.disabled = true;
   setStatusResult('请求进行中...', null);
   const startTime = performance.now();
 
   try {
-    const imageDataUrl = imageFile ? await readFileAsDataURL(imageFile) : null;
-    const messages = buildMessages(systemInput.value.trim(), text, imageDataUrl);
-    const payload = buildPayload(messages);
+    const previewDataUrls = imageFiles.length
+      ? await Promise.all(imageFiles.map((file) => readFileAsDataURL(file)))
+      : [];
+    const modelSupportsImage = supportsImage(selectedModel);
 
-    const userMsg = appendUserMessage(text || (imageDataUrl ? '（仅发送图片）' : ''), imageDataUrl);
-    const assistantMsg = appendAssistantMessage();
+    if (previewDataUrls.length && !modelSupportsImage && !text) {
+      throw new Error('当前模型不支持图片且没有文本内容，已取消发送。');
+    }
+
+    const needImageWarning = Boolean(previewDataUrls.length && !modelSupportsImage && text);
+    const payloadImages = modelSupportsImage ? previewDataUrls : [];
+    const messages = buildMessages(systemInput.value.trim(), text, payloadImages);
+    const payload = buildPayload(messages, selectedModel);
+
+    appendUserMessage(
+      text || (previewDataUrls.length ? '（仅发送图片）' : ''),
+      previewDataUrls,
+      requestTimeText,
+    );
+    if (needImageWarning) {
+      appendSystemMessage('当前模型不支持图片，已只发送文本内容。');
+    }
+    const assistantMsg = appendAssistantMessage(requestTimeText, selectedModel);
+    const usageHolder = { data: null };
 
     const response = await fetch(buildRequestUrl(), {
       method: 'POST',
@@ -109,17 +147,24 @@ async function handleSend() {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        processStreamLine(line, assistantMsg);
+        processStreamLine(line, assistantMsg, usageHolder);
       }
     }
 
     if (buffer.trim()) {
-      processStreamLine(buffer, assistantMsg);
+      processStreamLine(buffer, assistantMsg, usageHolder);
     }
 
     const duration = Math.round(performance.now() - startTime);
     statusTime.textContent = `耗时：${duration} ms`;
     setStatusResult('请求成功', true);
+    updateAssistantMetadata(
+      assistantMsg.metaLine,
+      requestTimeText,
+      duration,
+      usageHolder.data,
+      selectedModel,
+    );
   } catch (error) {
     const duration = Math.round(performance.now() - startTime);
     statusTime.textContent = `耗时：${duration} ms`;
@@ -132,9 +177,9 @@ async function handleSend() {
 }
 
 // 构造完整 payload，包含基础参数及实验性的思考开关
-function buildPayload(messages) {
+function buildPayload(messages, modelName) {
   const payload = {
-    model: modelSelect.value,
+    model: modelName,
     messages,
     stream: true,
   };
@@ -149,23 +194,25 @@ function buildPayload(messages) {
     payload.max_tokens = maxTokens;
   }
 
-  payload.thinking_enabled = thinkingToggle.checked;
   return payload;
 }
 
 // 根据 system / 文本 / 图片组合构建 messages 数组
-function buildMessages(systemText, text, imageDataUrl) {
+function buildMessages(systemText, text, imageDataUrls) {
   const messages = [];
   if (systemText) {
     messages.push({ role: 'system', content: systemText });
   }
 
-  if (imageDataUrl) {
+  const hasImages = Array.isArray(imageDataUrls) && imageDataUrls.length > 0;
+  if (hasImages) {
     const contentParts = [];
     if (text) {
       contentParts.push({ type: 'text', text });
     }
-    contentParts.push({ type: 'image_url', image_url: imageDataUrl });
+    imageDataUrls.forEach((url) => {
+      contentParts.push({ type: 'image_url', image_url: url });
+    });
     messages.push({ role: 'user', content: contentParts });
   } else {
     messages.push({ role: 'user', content: text });
@@ -196,8 +243,27 @@ function buildRequestUrl() {
   return `${base}/v1/chat/completions`;
 }
 
+// 渲染左侧调试区的图片预览，支持多张图显示
+function renderImagePreview(files) {
+  imagePreview.innerHTML = '';
+  if (!files.length) {
+    imagePreview.style.display = 'none';
+    return;
+  }
+  imagePreview.style.display = 'grid';
+  files.forEach((file) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = document.createElement('img');
+      img.src = event.target.result;
+      imagePreview.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // 在聊天区域添加一条用户消息气泡
-function appendUserMessage(text, imageDataUrl) {
+function appendUserMessage(text, imageDataUrls, timeText) {
   const row = document.createElement('div');
   row.className = 'message-row';
 
@@ -205,14 +271,22 @@ function appendUserMessage(text, imageDataUrl) {
   bubble.className = 'bubble user';
   bubble.textContent = text;
 
-  if (imageDataUrl) {
-    const img = document.createElement('img');
-    img.src = imageDataUrl;
-    img.style.maxWidth = '160px';
-    img.style.display = 'block';
-    img.style.marginTop = '8px';
-    bubble.appendChild(img);
+  if (Array.isArray(imageDataUrls) && imageDataUrls.length) {
+    const grid = document.createElement('div');
+    grid.className = 'preview-grid';
+    grid.style.display = 'grid';
+    imageDataUrls.forEach((url) => {
+      const img = document.createElement('img');
+      img.src = url;
+      grid.appendChild(img);
+    });
+    bubble.appendChild(grid);
   }
+
+  const meta = document.createElement('div');
+  meta.className = 'meta-info meta-user';
+  meta.textContent = `时间：${timeText}`;
+  bubble.appendChild(meta);
 
   row.appendChild(bubble);
   chatArea.appendChild(row);
@@ -236,7 +310,7 @@ function appendSystemMessage(text) {
 }
 
 // 为 assistant 创建一个容器，用于放置思考区和正式回答区
-function appendAssistantMessage() {
+function appendAssistantMessage(timeText, modelName) {
   const row = document.createElement('div');
   row.className = 'message-row';
 
@@ -258,17 +332,22 @@ function appendAssistantMessage() {
   const answerBubble = document.createElement('div');
   answerBubble.className = 'bubble assistant';
 
+  const metaLine = document.createElement('div');
+  metaLine.className = 'meta-info meta-assistant';
+  metaLine.textContent = `时间：${timeText} ｜ 模型：${modelName}`;
+
   container.appendChild(thoughtBlock);
   container.appendChild(answerBubble);
+  container.appendChild(metaLine);
   row.appendChild(container);
   chatArea.appendChild(row);
   autoScroll();
 
-  return { thoughtBlock, thoughtContent, answerContent: answerBubble };
+  return { thoughtBlock, thoughtContent, answerContent: answerBubble, metaLine };
 }
 
 // 逐行处理流式分片，区分思考和正式回答
-function processStreamLine(line, assistantNodes) {
+function processStreamLine(line, assistantNodes, usageHolder) {
   const trimmed = line.trim();
   if (!trimmed) return;
 
@@ -287,6 +366,15 @@ function processStreamLine(line, assistantNodes) {
   }
   if (answerText) {
     assistantNodes.answerContent.textContent += answerText;
+  }
+  if (parsed.usage) {
+    usageHolder.data = parsed.usage;
+  } else if (Array.isArray(parsed.choices)) {
+    parsed.choices.forEach((choice) => {
+      if (choice?.usage) {
+        usageHolder.data = choice.usage;
+      }
+    });
   }
   autoScroll();
 }
@@ -359,6 +447,69 @@ function normalizeContent(content) {
   }
 
   return '';
+}
+
+// 更新 assistant 元信息（时间 / 耗时 / 模型 / token 使用情况）
+function updateAssistantMetadata(metaEl, timeText, durationMs, usage, modelName) {
+  if (!metaEl) return;
+  let text = `时间：${timeText}`;
+  text += ` ｜ 用时：${formatDuration(durationMs)}`;
+  if (modelName) {
+    text += ` ｜ 模型：${modelName}`;
+  }
+  const usageText = formatUsage(usage);
+  if (usageText) {
+    text += ` ｜ ${usageText}`;
+  }
+  metaEl.textContent = text;
+}
+
+// 格式化时间戳，显示 YYYY-MM-DD HH:mm:ss
+function formatTimestamp(dateObj) {
+  const pad = (num) => String(num).padStart(2, '0');
+  const year = dateObj.getFullYear();
+  const month = pad(dateObj.getMonth() + 1);
+  const day = pad(dateObj.getDate());
+  const hour = pad(dateObj.getHours());
+  const minute = pad(dateObj.getMinutes());
+  const second = pad(dateObj.getSeconds());
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+// 将耗时转换为 s/ms 文本
+function formatDuration(durationMs) {
+  if (!Number.isFinite(durationMs)) return '-';
+  if (durationMs >= 1000) {
+    return `${(durationMs / 1000).toFixed(2)} s`;
+  }
+  return `${durationMs} ms`;
+}
+
+// 根据 usage 数据生成 token 描述
+function formatUsage(usage) {
+  if (!usage) return '';
+  const total = usage.total_tokens;
+  const prompt = usage.prompt_tokens;
+  const completion = usage.completion_tokens;
+  if (total === undefined && prompt === undefined && completion === undefined) {
+    return '';
+  }
+
+  let text = 'Tokens：';
+  if (total !== undefined) {
+    text += `total ${total}`;
+  }
+  const details = [];
+  if (prompt !== undefined) {
+    details.push(`prompt ${prompt}`);
+  }
+  if (completion !== undefined) {
+    details.push(`completion ${completion}`);
+  }
+  if (details.length) {
+    text += `（${details.join(' / ')}）`;
+  }
+  return text;
 }
 
 // 状态栏提示颜色切换

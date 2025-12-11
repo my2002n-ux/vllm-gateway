@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -23,13 +23,17 @@ app.add_middleware(
 )
 
 
-# Message 模型描述单条对话消息：
-# - role：system/user/assistant 等角色
-# - content：字符串或富内容列表，兼容 OpenAI 的 message schema
-# - name：可选字段，保留用户自定义角色名
+# content part 模型描述多模态分片（OpenAI 规范：text / image_url）
+class ContentPart(BaseModel):
+    type: Literal["text", "image_url"]
+    text: Optional[str] = None
+    image_url: Optional[Dict[str, Any]] = None
+
+
+# Message 模型支持两种 content 形态：纯字符串或 ContentPart 列表
 class Message(BaseModel):
     role: str
-    content: Union[str, List[Dict[str, Any]], None] = None
+    content: Union[str, List[ContentPart], None] = None
     name: Optional[str] = None
 
     class Config:
@@ -59,6 +63,42 @@ class ChatCompletionRequest(BaseModel):
 
     class Config:
         extra = "allow"
+
+
+def extract_text_and_images(message: Message) -> Tuple[str, List[str]]:
+    """拆解一条 message，返回拼接后的文本和图片 URL 列表。"""
+    text_segments: List[str] = []
+    images: List[str] = []
+    content = message.content
+
+    if isinstance(content, str) and content:
+        text_segments.append(content)
+    elif isinstance(content, list):
+        for part in content:
+            if part.type == "text" and part.text:
+                text_segments.append(part.text)
+            elif part.type == "image_url" and part.image_url:
+                url = None
+                if isinstance(part.image_url, dict):
+                    url = part.image_url.get("url") or part.image_url.get("data")
+                if isinstance(url, str):
+                    images.append(url)
+
+    text = "\n\n".join(text_segments)
+    return text, images
+
+
+def normalize_messages_for_backend(messages: List[Message]) -> List[Dict[str, Any]]:
+    """将 Message 转成底层模型可消费的结构，统一 content 字段，并按需附带 images。"""
+    normalized: List[Dict[str, Any]] = []
+    for message in messages:
+        text, images = extract_text_and_images(message)
+        message_dict = message.dict(exclude_none=True, exclude={"content"})
+        message_dict["content"] = text
+        if images:
+            message_dict["images"] = images  # 底层模型可根据 images 判断是否需要多模态输入
+        normalized.append(message_dict)
+    return normalized
 
 
 # 将 OpenAI 风格的请求转换成 Ollama /api/chat 接口所需的字段
@@ -122,9 +162,7 @@ async def _forward_non_streaming(
 async def proxy_stream_chat_completions(request: ChatCompletionRequest):
     """通过 Ollama 的 stream 接口逐行产出 JSON，供 StreamingResponse 包装使用。"""
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = [
-        message.dict(exclude_none=True) for message in request.messages
-    ]
+    request_dict["messages"] = normalize_messages_for_backend(request.messages)
     request_dict["stream"] = True
     ollama_payload = _build_ollama_payload(request_dict)
     timeout = httpx.Timeout(60.0, connect=10.0)
@@ -160,9 +198,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
     # request.dict(exclude_none=True) 避免发送 None 字段给上游
     request_dict = request.dict(exclude_none=True)
-    request_dict["messages"] = [
-        message.dict(exclude_none=True) for message in request.messages
-    ]
+    request_dict["messages"] = normalize_messages_for_backend(request.messages)
     # 将 OpenAI 风格请求转换成 Ollama 兼容格式
     ollama_payload = _build_ollama_payload(request_dict)
     # 定义客户端与 Ollama 交互的超时设置（60 秒响应、10 秒连接）
