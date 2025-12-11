@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+import base64
 import os
+import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Ollama 服务地址，支持通过 OLLAMA_URL 环境变量进行 dev/prod 多环境切换
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://10.10.10.28:11434/api/chat")
 # 支持多模态图片输入的模型白名单
 VL_MODELS = {"qwen3-vl:32b", "gemma3:27b"}
+IMAGE_DIR = "/home/chenshi/vllm-images"
+IMAGE_BASE_URL = "http://192.168.1.61:8000/images"
+
+try:
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+    print(f"[DEBUG] ensured image directory exists: {IMAGE_DIR}")
+except OSError as exc:
+    print(f"[ERROR] failed to ensure image directory {IMAGE_DIR}: {exc}")
 
 app = FastAPI(title="Ollama Chat Proxy", version="1.0.0")
+app.mount("/images", StaticFiles(directory=IMAGE_DIR), name="images")
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,6 +110,92 @@ class ChatCompletionRequest(BaseModel):
         extra = "allow"
 
 
+_MIME_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+}
+
+
+def _extension_from_mime(mime_type: str) -> str:
+    return _MIME_EXTENSIONS.get(mime_type.lower(), ".png")
+
+
+def _save_data_url_image(data_url: str) -> Optional[str]:
+    if not data_url.startswith("data:image"):
+        return None
+
+    try:
+        header, b64_data = data_url.split(",", 1)
+    except ValueError:
+        print(f"[WARN] invalid data URL, missing comma separator: {data_url[:40]}")
+        return None
+
+    if not header.startswith("data:"):
+        print(f"[WARN] invalid data URL header: {header}")
+        return None
+
+    meta = header[len("data:") :]
+    mime_type = meta.split(";")[0] if ";" in meta else meta
+    extension = _extension_from_mime(mime_type)
+
+    try:
+        image_bytes = base64.b64decode(b64_data, validate=True)
+    except Exception as exc:
+        print(f"[ERROR] failed to decode base64 image: {exc}")
+        return None
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    random_token = uuid.uuid4().hex[:8]
+    filename = f"img-{timestamp}-{random_token}{extension}"
+    file_path = os.path.join(IMAGE_DIR, filename)
+    try:
+        with open(file_path, "wb") as f:
+            f.write(image_bytes)
+    except OSError as exc:
+        print(f"[ERROR] failed to write image file {file_path}: {exc}")
+        return None
+
+    file_url = f"{IMAGE_BASE_URL}/{filename}"
+    print(f"[DEBUG] saved image to {file_path}, url={file_url}")
+    return file_url
+
+
+def replace_dataurls_with_local_files(messages: List[Message]) -> int:
+    saved = 0
+    for message in messages:
+        content = message.content
+        if not isinstance(content, list):
+            continue
+
+        for part in content:
+            if part.type != "image_url" or not part.image_url:
+                continue
+
+            url: Optional[str] = None
+            image_field = part.image_url
+            if isinstance(image_field, dict):
+                url = image_field.get("url") or image_field.get("data")
+            elif isinstance(image_field, str):
+                url = image_field
+
+            if not isinstance(url, str) or not url.startswith("data:image"):
+                continue
+
+            file_url = _save_data_url_image(url)
+            if not file_url:
+                continue
+
+            saved += 1
+            if isinstance(image_field, dict):
+                image_field["url"] = file_url
+                image_field.pop("data", None)
+            else:
+                part.image_url = {"url": file_url}
+    return saved
+
+
 def extract_text_and_images(message: Message) -> Tuple[str, List[str]]:
     """拆解一条 message，返回拼接后的文本和图片 URL 列表。"""
     text_segments: List[str] = []
@@ -159,10 +258,18 @@ def prepare_messages_for_backend(
         )
         return text_messages, True
 
+    saved_images = replace_dataurls_with_local_files(request.messages)
+    if saved_images:
+        print(f"[DEBUG] data URLs persisted for {saved_images} image(s)")
+
+    print(
+        f"[DEBUG] VL request model={request.model}, msg_count={len(request.messages)}, "
+        f"images={total_images}"
+    )
     vl_messages = normalize_messages_for_vl(request.messages)
     print(
         f"[DEBUG] has_image=True, use VL path, model={request.model}, "
-        f"msg_count={len(vl_messages)}"
+        f"msg_count={len(vl_messages)}, images={total_images}"
     )
     if vl_messages:
         print(f"[DEBUG] first vl message: {vl_messages[0]}")
