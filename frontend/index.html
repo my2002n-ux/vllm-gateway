@@ -127,10 +127,18 @@
       margin-top: 6px;
     }
 
+    .preview-grid {
+      display: none;
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+      gap: 8px;
+      margin-top: 6px;
+      overflow: visible !important;
+    }
+
     .preview-card {
       position: relative;
       border-radius: 10px;
-      overflow: hidden;
+      overflow: visible;
       border: 1px dashed var(--border);
       background: #f9fafb;
     }
@@ -144,16 +152,18 @@
 
     .preview-remove {
       position: absolute;
-      top: 4px;
-      right: 4px;
+      top: -8px;
+      right: -8px;
       border: none;
-      border-radius: 999px;
-      width: 20px;
-      height: 20px;
-      background: rgba(0, 0, 0, 0.6);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      background: rgba(0, 0, 0, 0.7);
       color: #fff;
       font-size: 14px;
-      line-height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
     }
 
@@ -173,6 +183,7 @@
       font-weight: 600;
       cursor: pointer;
       transition: opacity 0.2s ease;
+      font-size: 18px;
     }
 
     .send-btn:disabled {

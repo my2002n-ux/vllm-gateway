@@ -25,8 +25,8 @@ const chatArea = document.getElementById('chat-area');
 const statusTime = document.getElementById('status-time');
 const statusResult = document.getElementById('status-result');
 const MAX_IMAGES = 5;
-// uploadedImages：保存已上传图片的 URL，用于构造请求和渲染预览
-let uploadedImages = [];
+// selectedImages：记录当前选中的图片（含 dataURL），用于预览和构造请求
+let selectedImages = [];
 let currentController = null; // currentController：防止并发请求
 
 initModelSelect();
@@ -39,24 +39,23 @@ modelSelect.addEventListener('change', () => {
 imageInput.addEventListener('change', async () => {
   const files = Array.from(imageInput.files || []);
   if (!files.length) return;
-  const availableSlots = MAX_IMAGES - uploadedImages.length;
+  const availableSlots = MAX_IMAGES - selectedImages.length;
   if (availableSlots <= 0) {
     appendSystemMessage('已经有 5 张图片，如需继续请先删除部分图片。');
     imageInput.value = '';
     return;
   }
-  const filesToProcess = files.slice(0, availableSlots);
   if (files.length > availableSlots) {
     console.log(`[INFO] 仅保留前 ${availableSlots} 张图片，其余已忽略`);
   }
 
-  for (const file of filesToProcess) {
+  for (const file of files.slice(0, availableSlots)) {
     try {
-      const url = await uploadImageAndGetUrl(file);
-      uploadedImages.push({ url });
+      const dataUrl = await readFileAsDataURL(file);
+      selectedImages.push({ file, dataUrl });
     } catch (err) {
-      console.error('上传图片失败', err);
-      appendSystemMessage(`上传图片失败：${err.message || '未知错误'}`);
+      console.error('读取图片失败', err);
+      appendSystemMessage(`读取图片失败：${err.message || '未知错误'}`);
     }
   }
   renderImagePreview();
@@ -100,7 +99,7 @@ function updateImageSectionVisibility() {
     imageSection.style.display = 'flex';
   } else {
     imageSection.style.display = 'none';
-    uploadedImages = [];
+    selectedImages = [];
     imageInput.value = '';
     renderImagePreview();
   }
@@ -117,7 +116,7 @@ async function handleSend() {
   const text = promptInput.value.trim();
   const modelSupportsImage = supportsImage(modelSelect.value);
   // imageUrls：基于 imageList 数组生成的最终 URL 列表，稍后会注入 messages content 中
-  const imageUrls = modelSupportsImage ? uploadedImages.map((item) => item.url) : [];
+  const imageUrls = modelSupportsImage ? selectedImages.map((item) => item.dataUrl) : [];
   if (!text && imageUrls.length === 0) {
     alert('请输入提示词或选择一张图片。');
     return;
@@ -130,7 +129,7 @@ async function handleSend() {
   setStatusResult('请求进行中...', null);
   const startTime = performance.now();
   updateButtonsDuringRequest(true);
-  const controller = new AbortController(); // 与停止按钮配合，用于中断 fetch
+  const controller = new AbortController(); // 控制单次请求的中断，防止并发
   currentController = controller;
   let assistantMsg = null;
   const usageHolder = { data: null };
@@ -265,12 +264,12 @@ function buildMessages(systemText, text, imageUrls) {
 
   const contents = [];
   // 将 imageList 中的 URL 转成 image_url 片段，保持顺序
-  for (const url of imageUrls) {
+  imageUrls.forEach((url) => {
     contents.push({
       type: 'image_url',
       image_url: { url },
     });
-  }
+  });
 
   if (text) {
     contents.push({ type: 'text', text });
@@ -294,12 +293,6 @@ function readFileAsDataURL(file) {
   });
 }
 
-// 上传图片并返回可用于 image_url 的地址；此处沿用数据 URL 方案
-async function uploadImageAndGetUrl(file) {
-  const dataUrl = await readFileAsDataURL(file);
-  return dataUrl;
-}
-
 // 请求地址统一处理一下，避免重复斜杠
 function buildRequestUrl() {
   let base = backendInput.value.trim();
@@ -315,16 +308,16 @@ function buildRequestUrl() {
 // 渲染左侧调试区的图片预览，配合 imageList 数组展示和删除
 function renderImagePreview() {
   imagePreview.innerHTML = '';
-  if (!uploadedImages.length) {
+  if (!selectedImages.length) {
     imagePreview.style.display = 'none';
     return;
   }
   imagePreview.style.display = 'grid';
-  uploadedImages.forEach((item, index) => {
+  selectedImages.forEach((item, index) => {
     const card = document.createElement('div');
     card.className = 'preview-card';
     const img = document.createElement('img');
-    img.src = item.url;
+    img.src = item.dataUrl;
     const removeBtn = document.createElement('button');
     removeBtn.className = 'preview-remove';
     removeBtn.textContent = '×';
@@ -337,7 +330,7 @@ function renderImagePreview() {
 
 // 删除缩略图时同步 imageList，并刷新 UI
 function removeImageAt(index) {
-  uploadedImages.splice(index, 1);
+  selectedImages.splice(index, 1);
   renderImagePreview();
 }
 
