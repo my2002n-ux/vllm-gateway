@@ -32,6 +32,9 @@ const MAX_IMAGES = 5;
 let selectedImages = [];
 let currentController = null; // currentController：防止并发请求
 
+const DEFAULT_BACKEND_BASE = buildDefaultBackendBase();
+initializeBackendInput();
+
 initModelSelect();
 updateImageSectionVisibility();
 modelSelect.addEventListener('change', () => {
@@ -80,6 +83,43 @@ function initModelSelect() {
     modelSelect.appendChild(option);
   });
   modelSelect.value = MODEL_OPTIONS[0];
+}
+
+function buildDefaultBackendBase() {
+  const hostname = window.location.hostname || 'localhost';
+  return `http://${formatHostnameForUrl(hostname)}:8000`;
+}
+
+function formatHostnameForUrl(hostname) {
+  if (!hostname) return 'localhost';
+  if (hostname.includes(':') && !hostname.startsWith('[') && !hostname.endsWith(']')) {
+    return `[${hostname}]`;
+  }
+  return hostname;
+}
+
+function initializeBackendInput() {
+  if (!backendInput) return;
+  if (!backendInput.placeholder) {
+    backendInput.placeholder = DEFAULT_BACKEND_BASE;
+  }
+  if (!backendInput.value?.trim()) {
+    backendInput.value = DEFAULT_BACKEND_BASE;
+  }
+}
+
+function getBackendBase() {
+  if (!backendInput) return DEFAULT_BACKEND_BASE;
+  return backendInput.value.trim() || DEFAULT_BACKEND_BASE;
+}
+
+function normalizeBaseUrl(url) {
+  let normalized = url?.trim() || DEFAULT_BACKEND_BASE;
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = `http://${normalized}`;
+  }
+  normalized = normalized.replace(/\/+$/, '');
+  return normalized || DEFAULT_BACKEND_BASE;
 }
 
 // 判断模型是否支持图片：白名单优先（当前含 qwen3-vl:32b、gemma3:27b），其次看模型名是否含 vl/vision
@@ -153,7 +193,7 @@ async function handleSend() {
     );
     assistantMsg = appendAssistantMessage(requestTimeText, selectedModel);
 
-    const response = await fetch(buildRequestUrl(), {
+    const response = await fetch(api('/v1/chat/completions'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -296,16 +336,11 @@ function readFileAsDataURL(file) {
   });
 }
 
-// 请求地址统一处理一下，避免重复斜杠
-function buildRequestUrl() {
-  let base = backendInput.value.trim();
-  if (!base) {
-    base = 'http://192.168.1.61:8000';
-  }
-  if (base.endsWith('/')) {
-    base = base.slice(0, -1);
-  }
-  return `${base}/v1/chat/completions`;
+// 统一构造 API 地址，避免重复/缺失斜杠
+function api(path) {
+  const base = normalizeBaseUrl(getBackendBase());
+  const normalizedPath = path?.startsWith('/') ? path : `/${path || ''}`;
+  return `${base}${normalizedPath}`;
 }
 
 // 渲染左侧调试区的图片预览，配合 imageList 数组展示和删除
