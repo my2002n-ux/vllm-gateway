@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>本地向量检索测试</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="column column-left">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">语句库 · 批量</p>
+              <h2>语句库录入</h2>
+            </div>
+          </div>
+          <textarea
+            id="bulk-input"
+            rows="12"
+            placeholder="一行一条语句，自动按行拆分"
+          ></textarea>
+          <button id="add-texts" class="btn primary-btn">新增到语句库</button>
+          <p id="add-error" class="error-text hidden"></p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">语句库 · 检索</p>
+              <h2>检索对比</h2>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>Query</span>
+            <input id="query-input" type="text" placeholder="输入检索语句" />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>展示条数 top_k</span>
+              <input id="topk-input" type="number" value="10" min="1" />
+            </label>
+            <label class="field">
+              <span>召回数量 recall_k</span>
+              <input id="recall-input" type="number" value="50" min="1" />
+            </label>
+          </div>
+
+          <button id="search-btn" class="btn primary-btn">开始对比</button>
+          <p id="search-error" class="error-text hidden"></p>
+
+          <div id="results-section" class="results-block hidden">
+            <h3>结果对比</h3>
+            <div id="search-results" class="results-table"></div>
+          </div>
+        </div>
+
+      </section>
+
+      <section class="column column-right">
+        <div class="card full-height">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">语句库 · 总览</p>
+              <h2>语句库</h2>
+            </div>
+            <div class="header-actions">
+              <button id="refresh-items" class="btn ghost-btn">刷新</button>
+              <button id="clear-library" class="btn danger-btn">清空</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table class="table-head">
+              <thead>
+                <tr>
+                  <th class="col-index">#</th>
+                  <th class="col-id">ID</th>
+                  <th class="col-text">语句</th>
+                  <th class="col-actions">操作</th>
+                </tr>
+              </thead>
+            </table>
+            <div class="table-scroll">
+              <table>
+                <tbody id="items-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <p id="items-error" class="error-text hidden"></p>
+        </div>
+      </section>
+    </main>
+
+    <script src="main.js"></script>
+  </body>
+</html>
