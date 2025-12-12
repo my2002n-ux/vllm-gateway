@@ -11,7 +11,7 @@ const MODEL_OPTIONS = [
 const IMAGE_MODELS = ['qwen3-vl:32b', 'gemma3:27b'];
 
 // 获取调试区和内容区的各类元素
-const backendInput = document.getElementById('backend-input');
+let backendInput = document.getElementById('backend-input');
 const modelSelect = document.getElementById('model-select');
 const systemInput = document.getElementById('system-input');
 const temperatureInput = document.getElementById('temperature-input');
@@ -33,7 +33,14 @@ let selectedImages = [];
 let currentController = null; // currentController：防止并发请求
 
 const DEFAULT_BACKEND_BASE = buildDefaultBackendBase();
-initializeBackendInput();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    backendInput = document.getElementById('backend-input');
+    initializeBackendInput();
+  });
+} else {
+  initializeBackendInput();
+}
 
 initModelSelect();
 updateImageSectionVisibility();
