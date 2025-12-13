@@ -24,6 +24,7 @@ const sendBtn = document.getElementById('send-btn');
 const chatArea = document.getElementById('chat-area');
 const statusTime = document.getElementById('status-time');
 const statusResult = document.getElementById('status-result');
+const scrollFollowBtn = document.getElementById('scroll-follow-btn');
 const imgViewerOverlay = document.getElementById('img-viewer-overlay');
 const imgViewerImg = document.getElementById('img-viewer-img');
 const imgViewerClose = document.getElementById('img-viewer-close');
@@ -31,6 +32,8 @@ const MAX_IMAGES = 5;
 // selectedImages：记录当前选中的图片（含 dataURL），用于预览和构造请求
 let selectedImages = [];
 let currentController = null; // currentController：防止并发请求
+const SCROLL_LOCK_THRESHOLD = 80;
+let autoScrollEnabled = true;
 
 const DEFAULT_BACKEND_BASE = buildDefaultBackendBase();
 if (document.readyState === 'loading') {
@@ -647,6 +650,9 @@ function setStatusResult(text, successFlag) {
 
 // 保持聊天区域滚动到底部，方便查看最新流式内容
 function autoScroll() {
+  if (!autoScrollEnabled || !chatArea) {
+    return;
+  }
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
@@ -671,4 +677,32 @@ if (imgViewerClose) {
     imgViewerOverlay.style.display = 'none';
     imgViewerImg.src = '';
   });
+}
+
+if (chatArea) {
+  chatArea.addEventListener('scroll', () => {
+    const distanceFromBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight;
+    if (distanceFromBottom > SCROLL_LOCK_THRESHOLD) {
+      if (autoScrollEnabled) {
+        autoScrollEnabled = false;
+        updateScrollFollowButton();
+      }
+    } else if (!autoScrollEnabled) {
+      autoScrollEnabled = true;
+      updateScrollFollowButton();
+    }
+  });
+}
+
+if (scrollFollowBtn) {
+  scrollFollowBtn.addEventListener('click', () => {
+    autoScrollEnabled = true;
+    updateScrollFollowButton();
+    chatArea.scrollTop = chatArea.scrollHeight;
+  });
+}
+
+function updateScrollFollowButton() {
+  if (!scrollFollowBtn) return;
+  scrollFollowBtn.style.display = autoScrollEnabled ? 'none' : 'flex';
 }

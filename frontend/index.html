@@ -67,6 +67,7 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      position: relative;
     }
 
     .section-title {
@@ -102,6 +103,14 @@
     textarea {
       resize: vertical;
       min-height: 80px;
+    }
+
+    #system-input {
+      min-height: 110px;
+    }
+
+    #prompt-input {
+      min-height: 130px;
     }
 
     .inline-inputs {
@@ -237,12 +246,15 @@
       background: var(--user);
       align-self: flex-end;
       border-bottom-right-radius: 4px;
+      max-width: 82%;
+      font-size: 14px;
     }
 
     .bubble.assistant {
       background: var(--assistant);
       align-self: flex-start;
       border-bottom-left-radius: 4px;
+      font-size: 15px;
     }
 
     .bubble.system {
@@ -334,6 +346,27 @@
       font-size: 32px;
       cursor: pointer;
     }
+
+    .scroll-follow-btn {
+      position: absolute;
+      right: 24px;
+      bottom: 90px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: none;
+      background: rgba(17, 24, 39, 0.85);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+      display: none;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .scroll-follow-btn:hover {
+      background: rgba(17, 24, 39, 1);
+    }
   </style>
 </head>
 <body>
@@ -384,6 +417,7 @@
     <section class="panel chat-panel">
       <div class="chat-panel-header">内容区</div>
       <div id="chat-area" class="chat-area"></div>
+      <button id="scroll-follow-btn" class="scroll-follow-btn">回到底部</button>
       <div class="status-bar">
         <span id="status-time">耗时：- ms</span>
         <span id="status-result">等待请求...</span>
