@@ -34,6 +34,7 @@ let selectedImages = [];
 let currentController = null; // currentController：防止并发请求
 const SCROLL_LOCK_THRESHOLD = 80;
 let autoScrollEnabled = true;
+const USER_MESSAGE_COLLAPSE_HEIGHT = 210;
 
 const DEFAULT_BACKEND_BASE = buildDefaultBackendBase();
 if (document.readyState === 'loading') {
@@ -385,11 +386,18 @@ function removeImageAt(index) {
 // 在聊天区域添加一条用户消息气泡
 function appendUserMessage(text, imageDataUrls, timeText) {
   const row = document.createElement('div');
-  row.className = 'message-row';
+  row.className = 'message-row user-message';
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble user';
-  bubble.textContent = text;
+
+  const contentWrapper = document.createElement('div');
+  contentWrapper.className = 'user-message-body';
+
+  const textBlock = document.createElement('div');
+  textBlock.className = 'user-message-text';
+  textBlock.textContent = text;
+  contentWrapper.appendChild(textBlock);
 
   if (Array.isArray(imageDataUrls) && imageDataUrls.length) {
     const grid = document.createElement('div');
@@ -401,8 +409,10 @@ function appendUserMessage(text, imageDataUrls, timeText) {
       img.className = 'chat-img';
       grid.appendChild(img);
     });
-    bubble.appendChild(grid);
+    contentWrapper.appendChild(grid);
   }
+
+  bubble.appendChild(contentWrapper);
 
   const meta = document.createElement('div');
   meta.className = 'meta-info meta-user';
@@ -411,6 +421,11 @@ function appendUserMessage(text, imageDataUrls, timeText) {
 
   row.appendChild(bubble);
   chatArea.appendChild(row);
+
+  requestAnimationFrame(() => {
+    handleUserMessageFolding(bubble, contentWrapper, meta);
+  });
+
   autoScroll();
   return bubble;
 }
@@ -705,4 +720,32 @@ if (scrollFollowBtn) {
 function updateScrollFollowButton() {
   if (!scrollFollowBtn) return;
   scrollFollowBtn.style.display = autoScrollEnabled ? 'none' : 'flex';
+}
+
+function handleUserMessageFolding(bubble, contentWrapper, meta) {
+  if (!bubble || !contentWrapper) return;
+  const isTooTall = contentWrapper.scrollHeight > USER_MESSAGE_COLLAPSE_HEIGHT;
+  if (!isTooTall) return;
+
+  bubble.classList.add('user-collapsible', 'collapsed');
+
+  const fade = document.createElement('div');
+  fade.className = 'user-collapse-fade';
+  contentWrapper.appendChild(fade);
+
+  const toggleBtn = document.createElement('button');
+  toggleBtn.type = 'button';
+  toggleBtn.className = 'collapse-toggle';
+  toggleBtn.textContent = '展开';
+  if (meta) {
+    bubble.insertBefore(toggleBtn, meta);
+  } else {
+    bubble.appendChild(toggleBtn);
+  }
+
+  toggleBtn.addEventListener('click', () => {
+    bubble.classList.toggle('collapsed');
+    const collapsed = bubble.classList.contains('collapsed');
+    toggleBtn.textContent = collapsed ? '展开' : '收起';
+  });
 }
