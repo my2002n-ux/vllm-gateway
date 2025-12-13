@@ -257,7 +257,8 @@
       background: var(--assistant);
       align-self: flex-start;
       border-bottom-left-radius: 4px;
-      font-size: 15px;
+      font-size: 13px;
+      line-height: 1.55;
     }
 
     .bubble.system {
@@ -337,6 +338,31 @@
 
     .collapse-toggle:hover {
       background: rgba(59, 130, 246, 0.25);
+    }
+
+    .user-meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .user-meta-row .meta-info {
+      margin-top: 0;
+    }
+
+    .user-meta-row .collapse-toggle {
+      margin-top: 0;
+      align-self: auto;
+    }
+
+    .bubble.assistant p {
+      margin: 0 0 8px;
+    }
+
+    .bubble.assistant p:last-child {
+      margin-bottom: 0;
     }
 
     .thought-block .tag {

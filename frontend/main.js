@@ -414,16 +414,20 @@ function appendUserMessage(text, imageDataUrls, timeText) {
 
   bubble.appendChild(contentWrapper);
 
+  const metaRow = document.createElement('div');
+  metaRow.className = 'user-meta-row';
+
   const meta = document.createElement('div');
   meta.className = 'meta-info meta-user';
   meta.textContent = `时间：${timeText}`;
-  bubble.appendChild(meta);
+  metaRow.appendChild(meta);
+  bubble.appendChild(metaRow);
 
   row.appendChild(bubble);
   chatArea.appendChild(row);
 
   requestAnimationFrame(() => {
-    handleUserMessageFolding(bubble, contentWrapper, meta);
+    handleUserMessageFolding(bubble, contentWrapper, metaRow);
   });
 
   autoScroll();
@@ -722,7 +726,7 @@ function updateScrollFollowButton() {
   scrollFollowBtn.style.display = autoScrollEnabled ? 'none' : 'flex';
 }
 
-function handleUserMessageFolding(bubble, contentWrapper, meta) {
+function handleUserMessageFolding(bubble, contentWrapper, metaRow) {
   if (!bubble || !contentWrapper) return;
   const isTooTall = contentWrapper.scrollHeight > USER_MESSAGE_COLLAPSE_HEIGHT;
   if (!isTooTall) return;
@@ -737,8 +741,8 @@ function handleUserMessageFolding(bubble, contentWrapper, meta) {
   toggleBtn.type = 'button';
   toggleBtn.className = 'collapse-toggle';
   toggleBtn.textContent = '展开';
-  if (meta) {
-    bubble.insertBefore(toggleBtn, meta);
+  if (metaRow) {
+    metaRow.insertBefore(toggleBtn, metaRow.firstChild);
   } else {
     bubble.appendChild(toggleBtn);
   }
