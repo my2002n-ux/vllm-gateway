@@ -4,6 +4,7 @@ const MODEL_OPTIONS = [
   'gemma3:27b',
   'qwen3-vl:32b',
   'gpt-oss:120b',
+  'qwen:32b',
   'qwen3:30b',
 ];
 
