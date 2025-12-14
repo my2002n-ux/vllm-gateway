@@ -29,6 +29,7 @@ const imgViewerOverlay = document.getElementById('img-viewer-overlay');
 const imgViewerImg = document.getElementById('img-viewer-img');
 const imgViewerClose = document.getElementById('img-viewer-close');
 const MAX_IMAGES = 5;
+const DEFAULT_MAX_TOKENS = 10000;
 // selectedImages：记录当前选中的图片（含 dataURL），用于预览和构造请求
 let selectedImages = [];
 let currentController = null; // currentController：防止并发请求
@@ -48,6 +49,9 @@ if (document.readyState === 'loading') {
 
 initModelSelect();
 updateImageSectionVisibility();
+if (maxTokensInput && !maxTokensInput.value) {
+  maxTokensInput.value = `${DEFAULT_MAX_TOKENS}`;
+}
 modelSelect.addEventListener('change', () => {
   updateImageSectionVisibility();
 });
@@ -301,10 +305,9 @@ function buildPayload(messages, modelName) {
     payload.temperature = temperature;
   }
 
-  const maxTokens = parseInt(maxTokensInput.value, 10);
-  if (!Number.isNaN(maxTokens)) {
-    payload.max_tokens = maxTokens;
-  }
+  const maxTokensRaw = maxTokensInput?.value ?? '';
+  const maxTokens = parseInt(maxTokensRaw, 10);
+  payload.max_tokens = Number.isNaN(maxTokens) ? DEFAULT_MAX_TOKENS : maxTokens;
 
   return payload;
 }

@@ -184,6 +184,8 @@ def _build_ollama_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "model": payload["model"],
         "messages": payload["messages"],
         "stream": payload.get("stream", False),
+        # keep the model warm for reuse
+        "keep_alive": "24h",
     }
 
     # options 中汇总温度、top_p 等推理参数，优先保留用户自定义 options
