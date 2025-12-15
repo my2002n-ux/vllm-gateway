@@ -2,6 +2,7 @@
 const MODEL_OPTIONS = [
   'qwen3:32b',
   'qwen2.5:32b',
+  'qwen2.5vl:32b',
   'gemma3:27b',
   'qwen3-vl:32b',
   'gpt-oss:120b',
