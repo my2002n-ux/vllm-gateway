@@ -1,6 +1,7 @@
 // 预定义模型列表（前端写死，后续可根据需求调整顺序/内容）
 const MODEL_OPTIONS = [
   'qwen3:32b',
+  'qwen2.5:32b',
   'gemma3:27b',
   'qwen3-vl:32b',
   'gpt-oss:120b',
