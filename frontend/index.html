@@ -90,6 +90,32 @@
       margin-bottom: 4px;
     }
 
+    .form-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .form-group-header label {
+      margin-bottom: 0;
+    }
+
+    .clear-btn {
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+      transition: color 0.15s ease;
+    }
+
+    .clear-btn:hover {
+      color: var(--accent);
+    }
+
     input[type="text"],
     input[type="number"],
     select,
@@ -128,6 +154,39 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
+    }
+
+    .file-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .file-row-title {
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .file-select-btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #374151;
+      cursor: pointer;
+      background: #f3f4f6;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+    }
+
+    .file-select-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #ffffff;
+    }
+
+    .file-input-native {
+      display: none;
     }
 
     .preview-grid {
@@ -467,7 +526,10 @@
         <select id="model-select"></select>
       </div>
       <div class="form-group">
-        <label for="system-input">System 提示词</label>
+        <div class="form-group-header">
+          <label for="system-input">System 提示词</label>
+          <button type="button" id="system-clear-btn" class="clear-btn">清空</button>
+        </div>
         <textarea id="system-input" placeholder="可选，给模型的系统角色说明"></textarea>
       </div>
       <div class="inline-inputs">
@@ -481,12 +543,25 @@
         </div>
       </div>
       <div class="form-group">
-        <label for="prompt-input">用户提示词</label>
+        <div class="form-group-header">
+          <label for="prompt-input">用户提示词</label>
+          <button type="button" id="prompt-clear-btn" class="clear-btn">清空</button>
+        </div>
         <textarea id="prompt-input" placeholder="请输入您的提示词..."></textarea>
       </div>
       <div id="image-section" class="file-row">
-        <label for="image-input">上传图片（可选，最多 5 张）</label>
-        <input id="image-input" type="file" accept="image/*" multiple />
+        <div class="file-row-header">
+          <span class="file-row-title">上传图片（可选，最多 5 张）</span>
+          <button type="button" id="image-select-btn" class="file-select-btn">选择文件</button>
+        </div>
+        <input
+          id="image-input"
+          class="file-input-native"
+          type="file"
+          accept="image/*"
+          multiple
+          aria-label="上传图片（可选，最多 5 张）"
+        />
         <div id="image-preview" class="preview-grid"></div>
       </div>
       <div class="action-row">

@@ -20,6 +20,9 @@ const temperatureInput = document.getElementById('temperature-input');
 const maxTokensInput = document.getElementById('max-tokens-input');
 const promptInput = document.getElementById('prompt-input');
 const imageInput = document.getElementById('image-input');
+const systemClearBtn = document.getElementById('system-clear-btn');
+const promptClearBtn = document.getElementById('prompt-clear-btn');
+const imageSelectBtn = document.getElementById('image-select-btn');
 const imagePreview = document.getElementById('image-preview');
 const imageSection = document.getElementById('image-section');
 const sendBtn = document.getElementById('send-btn');
@@ -57,6 +60,24 @@ if (maxTokensInput && !maxTokensInput.value) {
 modelSelect.addEventListener('change', () => {
   updateImageSectionVisibility();
 });
+
+if (systemClearBtn) {
+  systemClearBtn.addEventListener('click', () => {
+    clearAndFocusInput(systemInput);
+  });
+}
+
+if (promptClearBtn) {
+  promptClearBtn.addEventListener('click', () => {
+    clearAndFocusInput(promptInput);
+  });
+}
+
+if (imageSelectBtn) {
+  imageSelectBtn.addEventListener('click', () => {
+    imageInput?.click();
+  });
+}
 
 // 注册文件选择预览逻辑，支持多张图片预览（最多 5 张）
 imageInput.addEventListener('change', async () => {
@@ -750,4 +771,10 @@ function handleUserMessageFolding(bubble, contentWrapper, metaRow) {
     const collapsed = bubble.classList.contains('collapsed');
     toggleBtn.textContent = collapsed ? '展开' : '收起';
   });
+}
+
+function clearAndFocusInput(field) {
+  if (!field) return;
+  field.value = '';
+  field.focus();
 }
