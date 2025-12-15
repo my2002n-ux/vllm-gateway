@@ -18,7 +18,7 @@ from pydantic import BaseModel
 # Ollama 服务地址，支持通过 OLLAMA_URL 环境变量进行 dev/prod 多环境切换
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://10.10.10.28:11434/api/chat")
 # 支持多模态图片输入的模型白名单
-VL_MODELS = {"qwen3-vl:32b", "gemma3:27b"}
+VL_MODELS = {"qwen3-vl:32b", 'qwen2.5vl:32b', "gemma3:27b"}
 IMAGE_DIR = "/home/chenshi/vllm-images"
 IMAGE_BASE_URL = "http://192.168.1.61:8000/images"
 

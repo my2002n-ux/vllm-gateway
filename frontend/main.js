@@ -10,7 +10,7 @@ const MODEL_OPTIONS = [
 ];
 
 // IMAGE_MODELS：显式支持图片的模型名单，新增多模态模型时可扩展
-const IMAGE_MODELS = ['qwen3-vl:32b','qwen2.5vl:32b','gemma3:27b'];
+const IMAGE_MODELS = ['qwen3-vl:32b', 'qwen2.5vl:32b', 'gemma3:27b'];
 
 // 获取调试区和内容区的各类元素
 let backendInput = document.getElementById('backend-input');
