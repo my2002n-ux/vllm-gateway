@@ -22,6 +22,11 @@ VL_MODELS = {"qwen3-vl:32b", 'qwen2.5vl:32b', "gemma3:27b"}
 IMAGE_DIR = "/home/chenshi/vllm-images"
 IMAGE_BASE_URL = "http://192.168.1.61:8000/images"
 
+def model_supports_image_input(model_name: str) -> bool:
+    """Return True if the model is allowed to handle image inputs."""
+    return model_name in VL_MODELS
+
+
 try:
     os.makedirs(IMAGE_DIR, exist_ok=True)
     print(f"[DEBUG] ensured image directory exists: {IMAGE_DIR}")
@@ -229,7 +234,7 @@ def build_ollama_messages(messages: List[Message], model_name: str) -> List[Dict
     并在每条消息上附加 images(base64) 以匹配 Ollama 的多模态输入格式。
     """
     prepared: List[Dict[str, Any]] = []
-    is_vl_model = model_name in VL_MODELS
+    is_vl_model = model_supports_image_input(model_name)
 
     if not is_vl_model:
         print(f"[DEBUG] model {model_name} not in VL_MODELS, image parts will be ignored")
@@ -252,10 +257,12 @@ def build_ollama_messages(messages: List[Message], model_name: str) -> List[Dict
 
         text_segments: List[str] = []
         images_b64: List[str] = []
+        had_image_part = False
         for part in content:
             if part.type == "text" and part.text:
                 text_segments.append(part.text)
             elif part.type == "image_url" and part.image_url:
+                had_image_part = True
                 if not is_vl_model:
                     print(
                         f"[WARN] ignore image for non-VL model {model_name}, role={message.role}"
@@ -295,6 +302,11 @@ def build_ollama_messages(messages: List[Message], model_name: str) -> List[Dict
             message_payload["name"] = message.name
         if images_b64:
             message_payload["images"] = images_b64
+        elif is_vl_model and had_image_part:
+            print(
+                f"[WARN] model {model_name} received image content but no data was encoded; "
+                "check image preprocessing pipeline."
+            )
 
         prepared.append(message_payload)
 

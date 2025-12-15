@@ -139,17 +139,10 @@ function normalizeBaseUrl(url) {
   return normalized || DEFAULT_BACKEND_BASE;
 }
 
-// 判断模型是否支持图片：白名单优先（当前含 qwen3-vl:32b、gemma3:27b），其次看模型名是否含 vl/vision
+// 判断模型是否支持图片：严格依据 IMAGE_MODELS 白名单
 function supportsImage(modelName) {
   if (!modelName) return false;
-  if (IMAGE_MODELS.includes(modelName)) {
-    return true;
-  }
-  const lower = modelName.toLowerCase();
-  if (lower.includes('vl') || lower.includes('vision')) {
-    return true;
-  }
-  return false;
+  return IMAGE_MODELS.includes(modelName);
 }
 
 // 根据当前模型决定是否展示图片上传区域，并在隐藏时清空数据
