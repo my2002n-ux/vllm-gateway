@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>本地大模型测试前端</title>
+  <style>
+    :root {
+      --bg: #eef1f5;
+      --panel: #ffffff;
+      --accent: #3b82f6;
+      --border: #d4dae3;
+      --assistant: #ecf4ff;
+      --user: #dfe7ef;
+      --system: #ffe9d6;
+      --thought-bg: #f6f2d6;
+      --user-fold-max-height: 210px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: #1f2937;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 16px 24px;
+      background: #111827;
+      color: #fff;
+      font-size: 20px;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .home-link {
+      color: #93c5fd;
+      text-decoration: none;
+      font-size: 12px;
+      padding: 4px 0;
+    }
+
+    .home-link:hover {
+      color: #bfdbfe;
+    }
+
+    .workspace {
+      flex: 1;
+      display: flex;
+      gap: 16px;
+      padding: 16px 20px;
+      overflow: hidden;
+    }
+
+    .panel {
+      background: var(--panel);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .debug-panel {
+      flex: 0 0 35%;
+      min-width: 320px;
+      overflow-y: auto;
+      gap: 16px;
+    }
+
+    .chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .section-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #4b5563;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+
+    .form-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .form-group-header label {
+      margin-bottom: 0;
+    }
+
+    .clear-btn {
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+      transition: color 0.15s ease;
+    }
+
+    .clear-btn:hover {
+      color: var(--accent);
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      background: #f9fafb;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    #system-input {
+      min-height: 110px;
+    }
+
+    #prompt-input {
+      min-height: 130px;
+    }
+
+    .inline-inputs {
+      display: flex;
+      gap: 10px;
+    }
+
+    .inline-inputs .form-group {
+      flex: 1;
+      margin-bottom: 0;
+    }
+
+    .file-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .file-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .file-row-title {
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .file-select-btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #374151;
+      cursor: pointer;
+      background: #f3f4f6;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+    }
+
+    .file-select-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #ffffff;
+    }
+
+    .file-input-native {
+      display: none;
+    }
+
+    .preview-grid {
+      display: none;
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .preview-grid {
+      display: none;
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+      gap: 8px;
+      margin-top: 6px;
+      overflow: visible !important;
+    }
+
+    .preview-card {
+      position: relative;
+      border-radius: 10px;
+      overflow: visible;
+      border: 1px dashed var(--border);
+      background: #f9fafb;
+    }
+
+    .preview-card img {
+      width: 100%;
+      height: 80px;
+      object-fit: cover;
+      display: block;
+    }
+
+    .preview-remove {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      border: none;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .send-btn {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 12px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s ease;
+      font-size: 18px;
+    }
+
+    .send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .chat-panel-header {
+      font-weight: 600;
+      font-size: 16px;
+      margin-bottom: 12px;
+    }
+
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .chat-area img {
+      max-width: 260px;
+      max-height: 260px;
+      border-radius: 8px;
+      cursor: pointer;
+      object-fit: cover;
+      display: block;
+    }
+
+    .message-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: 16px;
+      max-width: 100%;
+      line-height: 1.6;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .bubble.user {
+      background: var(--user);
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+      max-width: 82%;
+      font-size: 13px;
+      line-height: 1.55;
+      position: relative;
+    }
+
+    .bubble.assistant {
+      background: var(--assistant);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .bubble.system {
+      background: var(--system);
+      align-self: center;
+      font-style: italic;
+    }
+
+    .assistant-container {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .thought-block {
+      background: var(--thought-bg);
+      border-left: 4px solid #eab308;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #4b5563;
+      width: 100%;
+      max-width: 100%;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .user-message-body {
+      position: relative;
+      overflow: visible;
+      transition: max-height 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .user-message-text {
+      white-space: inherit;
+    }
+
+    .user-collapse-fade {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 70px;
+      background: linear-gradient(180deg, rgba(223, 231, 239, 0) 0%, rgba(223, 231, 239, 0.96) 100%);
+      pointer-events: none;
+    }
+
+    .user-collapsible.collapsed .user-message-body {
+      max-height: var(--user-fold-max-height);
+      overflow: hidden;
+    }
+
+    .user-collapsible.collapsed .user-collapse-fade {
+      display: block;
+    }
+
+    .collapse-toggle {
+      border: none;
+      border-radius: 999px;
+      padding: 4px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      align-self: flex-end;
+      background: rgba(59, 130, 246, 0.15);
+      color: #1f2937;
+      transition: background 0.2s ease;
+      margin-top: 4px;
+    }
+
+    .collapse-toggle:hover {
+      background: rgba(59, 130, 246, 0.25);
+    }
+
+    .user-meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .user-meta-row .meta-info {
+      margin-top: 0;
+    }
+
+    .user-meta-row .collapse-toggle {
+      margin-top: 0;
+      align-self: auto;
+    }
+
+    .bubble.assistant p {
+      margin: 0 0 8px;
+    }
+
+    .bubble.assistant p:last-child {
+      margin-bottom: 0;
+    }
+
+    .thought-block .tag {
+      font-size: 11px;
+      font-weight: 600;
+      color: #b45309;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+      display: inline-block;
+    }
+
+    .meta-info {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 6px;
+    }
+
+    .meta-user {
+      text-align: right;
+    }
+
+    .meta-assistant {
+      text-align: left;
+    }
+
+    .status-bar {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      background: #f1f5f9;
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      border: 1px dashed var(--border);
+    }
+    .img-viewer-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+
+    .img-viewer-img {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 8px;
+    }
+
+    .img-viewer-close {
+      position: absolute;
+      top: 20px;
+      right: 30px;
+      color: #fff;
+      font-size: 32px;
+      cursor: pointer;
+    }
+
+    .scroll-follow-btn {
+      position: absolute;
+      right: 24px;
+      bottom: 90px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: none;
+      background: rgba(17, 24, 39, 0.85);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+      display: none;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .scroll-follow-btn:hover {
+      background: rgba(17, 24, 39, 1);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span>本地大模型测试前端</span>
+    <a class="home-link" href="/">< 返回</a>
+  </header>
+  <div class="workspace">
+    <section class="panel debug-panel">
+      <div class="section-title">调试区</div>
+      <div class="form-group">
+        <label for="backend-input">后端地址</label>
+        <input
+          id="backend-input"
+          type="text"
+          placeholder="默认会自动填充为当前页面主机:8000"
+        />
+      </div>
+      <div class="form-group">
+        <label for="model-select">模型名称</label>
+        <select id="model-select"></select>
+      </div>
+      <div class="form-group">
+        <div class="form-group-header">
+          <label for="system-input">System 提示词</label>
+          <button type="button" id="system-clear-btn" class="clear-btn">清空</button>
+        </div>
+        <textarea id="system-input" placeholder="可选，给模型的系统角色说明"></textarea>
+      </div>
+      <div class="inline-inputs">
+        <div class="form-group">
+          <label for="temperature-input">temperature</label>
+          <input id="temperature-input" type="number" step="0.1" min="0" max="2" value="0.7" />
+        </div>
+        <div class="form-group">
+          <label for="max-tokens-input">max_tokens</label>
+          <input id="max-tokens-input" type="number" min="1" placeholder="可选" />
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-group-header">
+          <label for="prompt-input">用户提示词</label>
+          <button type="button" id="prompt-clear-btn" class="clear-btn">清空</button>
+        </div>
+        <textarea id="prompt-input" placeholder="请输入您的提示词..."></textarea>
+      </div>
+      <div id="image-section" class="file-row">
+        <div class="file-row-header">
+          <span class="file-row-title">上传图片（可选，最多 5 张）</span>
+          <button type="button" id="image-select-btn" class="file-select-btn">选择文件</button>
+        </div>
+        <input
+          id="image-input"
+          class="file-input-native"
+          type="file"
+          accept="image/*"
+          multiple
+          aria-label="上传图片（可选，最多 5 张）"
+        />
+        <div id="image-preview" class="preview-grid"></div>
+      </div>
+      <div class="action-row">
+        <button id="send-btn" class="send-btn">发送</button>
+      </div>
+    </section>
+
+    <section class="panel chat-panel">
+      <div class="chat-panel-header">内容区</div>
+      <div id="chat-area" class="chat-area"></div>
+      <button id="scroll-follow-btn" class="scroll-follow-btn">回到底部</button>
+      <div class="status-bar">
+        <span id="status-time">耗时：- ms</span>
+        <span id="status-result">等待请求...</span>
+      </div>
+    </section>
+  </div>
+
+  <div id="img-viewer-overlay" class="img-viewer-overlay" style="display: none;">
+    <span id="img-viewer-close" class="img-viewer-close">×</span>
+    <img id="img-viewer-img" class="img-viewer-img" src="" />
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>
