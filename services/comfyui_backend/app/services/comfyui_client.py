@@ -28,7 +28,9 @@ class ComfyUIClient:
         payload = {"client_id": client_id, "prompt": prompt}
         response = await self._request("POST", "/prompt", json=payload)
         data = response.json()
-        if any(key in data for key in ("error", "errors", "node_errors")):
+        node_errors = data.get("node_errors")
+        has_node_errors = isinstance(node_errors, dict) and bool(node_errors)
+        if has_node_errors or "error" in data or "errors" in data:
             raise ComfyUIError(
                 "ComfyUI returned error in response body",
                 status_code=response.status_code,
