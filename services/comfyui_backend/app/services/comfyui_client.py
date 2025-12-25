@@ -52,6 +52,9 @@ class ComfyUIClient:
     def build_view_url(self) -> str:
         return f"{self.base_url}/view"
 
+    def build_files_url(self) -> str:
+        return f"{self.base_url}/api/files"
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         url = f"{self.base_url}{path}"
         timeout = kwargs.pop("timeout", httpx.Timeout(60.0, connect=10.0))
@@ -72,6 +75,28 @@ class ComfyUIClient:
                     status_code=exc.response.status_code,
                     response_text=response_text,
                     response_json=response_json,
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ComfyUIError(f"Failed to reach ComfyUI: {exc}") from exc
+
+    async def stream_image(
+        self, filename: str, subfolder: str = "", file_type: str = "output"
+    ):
+        url = self.build_files_url()
+        params = {"filename": filename, "subfolder": subfolder, "type": file_type}
+        timeout = httpx.Timeout(120.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                async with client.stream("GET", url, params=params) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+            except httpx.HTTPStatusError as exc:
+                response_text = exc.response.text
+                raise ComfyUIError(
+                    "ComfyUI returned non-2xx response",
+                    status_code=exc.response.status_code,
+                    response_text=response_text,
                 ) from exc
             except httpx.HTTPError as exc:
                 raise ComfyUIError(f"Failed to reach ComfyUI: {exc}") from exc

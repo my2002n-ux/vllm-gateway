@@ -304,25 +304,21 @@ async def proxy_image(
     file_type: str = Query("output", alias="type"),
 ) -> StreamingResponse:
     client = ComfyUIClient()
-    view_url = client.build_view_url()
-    params = {"filename": filename, "subfolder": subfolder, "type": file_type}
 
     async def _proxy_stream() -> Any:
-        timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as http_client:
-            async with http_client.stream("GET", view_url, params=params) as response:
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=exc.response.text or "Failed to fetch image from ComfyUI",
-                    ) from exc
-                async for chunk in response.aiter_bytes():
-                    yield chunk
+        try:
+            async for chunk in client.stream_image(
+                filename=filename, subfolder=subfolder, file_type=file_type
+            ):
+                yield chunk
+        except ComfyUIError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=exc.response_text or str(exc),
+            ) from exc
 
     headers = {
         "Content-Type": "image/png",
-        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "no-store",
     }
     return StreamingResponse(_proxy_stream(), headers=headers, media_type="image/png")
