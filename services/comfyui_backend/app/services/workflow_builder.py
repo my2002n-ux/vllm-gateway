@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from copy import deepcopy
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 
 class TemplateError(ValueError):
@@ -74,18 +74,6 @@ def _ensure_inputs(prompt: Dict[str, Any], node_id: str) -> Dict[str, Any]:
     return inputs
 
 
-def _parse_allowlist(env_value: Optional[str]) -> Optional[Set[str]]:
-    if not env_value:
-        return None
-    if env_value.strip() == "*":
-        return None
-    return {item.strip() for item in env_value.split(",") if item.strip()}
-
-
-def _lora_allowlist() -> Optional[Set[str]]:
-    return _parse_allowlist(os.getenv("LORA_ALLOWLIST"))
-
-
 def build_prompt(
     template_id: str,
     prompt_text: str,
@@ -116,9 +104,6 @@ def build_prompt(
         if enable_lora:
             if not lora_name:
                 raise TemplateError("enable_lora is true but lora_name is empty")
-            allowlist = _lora_allowlist()
-            if allowlist is not None and lora_name not in allowlist:
-                raise TemplateError(f"lora_name not allowed: {lora_name}")
             _ensure_inputs(prompt, "48")["lora_name"] = lora_name
         else:
             _ensure_inputs(prompt, "47")["model"] = ["46", 0]
