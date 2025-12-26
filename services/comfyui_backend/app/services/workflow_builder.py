@@ -80,7 +80,7 @@ def build_prompt(
     seed: int,
     width: int,
     height: int,
-    cfg: float = 7.0,
+    cfg: float = 2.0,
     batch_size: int = 1,
     enable_lora: bool = False,
     lora_name: Optional[str] = None,
@@ -130,7 +130,7 @@ def build_prompt(
                 sampler_ids.append(node_id)
 
     if sampler_ids:
-        print(f"[INFO] applied cfg={cfg} to sampler nodes: {sampler_ids}")
+        print(f"[INFO] CFG_APPLIED={cfg} sampler_nodes={sampler_ids}")
     else:
         print("[WARN] CFG not applied: sampler node not found")
 

@@ -136,18 +136,15 @@ async def _refresh_task(task: TaskRecord, client: ComfyUIClient) -> None:
 
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest) -> GenerateResponse:
-    default_cfg = 7.0
+    default_cfg = 2.0
     cfg_value = default_cfg
     if request.cfg is not None:
         try:
             cfg_value = float(request.cfg)
         except (TypeError, ValueError):
             cfg_value = default_cfg
-        if cfg_value < 0.5 or cfg_value > 30:
-            print(f"[WARN] cfg out of range ({cfg_value}); fallback to {default_cfg}")
-            cfg_value = default_cfg
 
-    print(f"[INFO] using cfg={cfg_value}")
+    print(f"[INFO] CFG_APPLIED={cfg_value}")
     try:
         prompt = build_prompt(
             template_id=request.template_id,
