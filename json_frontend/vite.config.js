@@ -9,6 +9,7 @@ export default defineConfig({
         json: 'json/index.html',
         llm: 'llm/index.html',
         vector: 'vector/index.html',
+        zimage: 'zimage/index.html',
       },
     },
   },

@@ -202,7 +202,7 @@ async def get_task_images(task_id: str, request: Request) -> ImagesResponse:
         await _refresh_task(task, client)
 
     if not task.outputs:
-        raise HTTPException(status_code=404, detail="No images available for this task")
+        return ImagesResponse(images=[])
 
     base_url = str(request.base_url).rstrip("/")
     images: List[Dict[str, Any]] = []

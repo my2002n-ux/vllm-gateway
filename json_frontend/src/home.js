@@ -16,6 +16,7 @@ const items = [
   { title: 'JSON 工具', desc: '解析、搜索、删除、导出', href: '/json/' },
   { title: '模型测试', desc: '本地大模型测试前端', href: '/llm/' },
   { title: '向量检索', desc: '本地向量检索测试', href: '/vector/' },
+  { title: '图片生成测试（Z-image模型）', desc: 'Z-image 生图与历史管理', href: '/zimage/' },
 ];
 
 items.forEach((item) => {
