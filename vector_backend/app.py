@@ -34,7 +34,7 @@ async def _forward_request(
 ) -> Any:
     url = f"{VECTOR_BASE}{path}"
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=False) as client:
             response = await client.request(method, url, params=params, json=json_body)
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502, detail=f"Vector service unavailable: {exc}") from exc
