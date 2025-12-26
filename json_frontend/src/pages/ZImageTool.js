@@ -1,6 +1,6 @@
 import './zimage.css';
 
-const API_BASE = 'http://10.10.10.61:8010';
+const API_BASE = '';
 const STORAGE_KEY = 'zimage_history_v1';
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 120;

@@ -214,7 +214,7 @@ async def get_task_images(task_id: str, request: Request) -> ImagesResponse:
             "subfolder": image.get("subfolder", ""),
             "type": image.get("type", "output"),
         }
-        url = f"{base_url}/images/{image.get('filename')}?{urlencode(params)}"
+        url = f"{base_url}/images/view?{urlencode(params)}"
         record = {**image, "url": url}
         images.append(record)
 

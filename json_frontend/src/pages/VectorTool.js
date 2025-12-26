@@ -105,7 +105,7 @@ export function createVectorToolPage() {
 
 function initVectorTool() {
   const isDev = import.meta?.env?.DEV;
-  const API_BASE = 'http://10.10.10.61:9002';
+  const API_BASE = '';
 
   // 拼接 API 地址，确保 path 前后斜杠正确
   function api(path) {
