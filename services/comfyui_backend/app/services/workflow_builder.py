@@ -80,6 +80,7 @@ def build_prompt(
     seed: int,
     width: int,
     height: int,
+    cfg: float = 7.0,
     batch_size: int = 1,
     enable_lora: bool = False,
     lora_name: Optional[str] = None,
@@ -118,5 +119,19 @@ def build_prompt(
             _ensure_inputs(prompt, "9")["images"] = ["50", 0]
         else:
             _ensure_inputs(prompt, "9")["images"] = ["43", 0]
+
+    sampler_ids = []
+    for node_id, node in prompt.items():
+        class_type = node.get("class_type")
+        if isinstance(class_type, str) and class_type.startswith("KSampler"):
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                inputs["cfg"] = cfg
+                sampler_ids.append(node_id)
+
+    if sampler_ids:
+        print(f"[INFO] applied cfg={cfg} to sampler nodes: {sampler_ids}")
+    else:
+        print("[WARN] CFG not applied: sampler node not found")
 
     return prompt

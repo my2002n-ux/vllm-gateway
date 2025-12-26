@@ -39,6 +39,7 @@ class GenerateRequest(BaseModel):
     seed: int
     width: int = Field(512, ge=1)
     height: int = Field(512, ge=1)
+    cfg: Optional[float] = None
     enable_lora: bool = False
     lora_name: Optional[str] = None
     enable_upscale: bool = False
@@ -135,6 +136,18 @@ async def _refresh_task(task: TaskRecord, client: ComfyUIClient) -> None:
 
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest) -> GenerateResponse:
+    default_cfg = 7.0
+    cfg_value = default_cfg
+    if request.cfg is not None:
+        try:
+            cfg_value = float(request.cfg)
+        except (TypeError, ValueError):
+            cfg_value = default_cfg
+        if cfg_value < 0.5 or cfg_value > 30:
+            print(f"[WARN] cfg out of range ({cfg_value}); fallback to {default_cfg}")
+            cfg_value = default_cfg
+
+    print(f"[INFO] using cfg={cfg_value}")
     try:
         prompt = build_prompt(
             template_id=request.template_id,
@@ -142,6 +155,7 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
             seed=request.seed,
             width=request.width,
             height=request.height,
+            cfg=cfg_value,
             batch_size=1,
             enable_lora=request.enable_lora,
             lora_name=request.lora_name,
