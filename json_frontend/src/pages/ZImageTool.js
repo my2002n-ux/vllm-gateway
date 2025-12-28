@@ -1,13 +1,16 @@
 import './zimage.css';
 
 const API_BASE = '';
-const STORAGE_KEY = 'zimage_history_v1';
+const HISTORY_KEY = 'zimage_history_v1';
+const HIDDEN_KEY = 'zimage_hidden_v1';
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 120;
 const POLL_MAX_DELAY_MS = 5000;
 const POLL_READY_DELAY_MS = 2000;
 const POLL_INITIAL_DELAY_MS = 1500;
-const POLL_TIMEOUT_MS = 120000;
+const POLL_TIMEOUT_MS = 30 * 60 * 1000;
+const POLL_MAX_ERRORS = 30;
+const MAX_HISTORY_RECORDS = 50;
 
 const LORA_OPTIONS = [
   { label: '卡通形象', value: 'BeautifulPeaches_ZIT.safetensors' },
@@ -85,12 +88,22 @@ export function createZImageToolPage() {
               </div>
 
               <div class="zimage-section">
-                <div class="zimage-label">随机种子</div>
+                <div class="zimage-seed-labels">
+                  <div class="zimage-label">随机种子</div>
+                  <div class="zimage-label">CFG 自由度</div>
+                </div>
                 <div class="zimage-seed-row">
-                  <label class="zimage-field zimage-inline">
-                    <input id="zimage-seed" class="input" type="number" />
-                  </label>
-                  <button type="button" id="zimage-seed-random" class="btn-secondary">随机</button>
+                  <div class="zimage-seed-left">
+                    <label class="zimage-field zimage-inline">
+                      <input id="zimage-seed" class="input" type="number" />
+                    </label>
+                    <button type="button" id="zimage-seed-random" class="btn-secondary">随机</button>
+                  </div>
+                  <div class="zimage-seed-right">
+                    <label class="zimage-field zimage-inline">
+                      <input id="zimage-cfg" class="input" type="number" min="1" max="2" value="1.2" step="0.1" />
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -98,11 +111,17 @@ export function createZImageToolPage() {
                 <div class="zimage-label">Prompt</div>
                 <label class="zimage-field">
                   <span class="zimage-field-label">固定指令</span>
-                  <textarea id="zimage-prompt-fixed" class="input zimage-textarea" rows="4" placeholder="可填写固定风格或规则"></textarea>
+                  <div class="zimage-textarea-wrap">
+                    <textarea id="zimage-prompt-fixed" class="input zimage-textarea" rows="4" placeholder="可填写固定风格或规则"></textarea>
+                    <button type="button" class="zimage-prompt-clear" data-target="zimage-prompt-fixed">清空</button>
+                  </div>
                 </label>
                 <label class="zimage-field">
                   <span class="zimage-field-label">动态指令</span>
-                  <textarea id="zimage-prompt-dynamic" class="input zimage-textarea" rows="4" placeholder="请输入需要生成的内容"></textarea>
+                  <div class="zimage-textarea-wrap">
+                    <textarea id="zimage-prompt-dynamic" class="input zimage-textarea" rows="4" placeholder="请输入需要生成的内容"></textarea>
+                    <button type="button" class="zimage-prompt-clear" data-target="zimage-prompt-dynamic">清空</button>
+                  </div>
                 </label>
               </div>
 
@@ -152,6 +171,7 @@ function initZImageTool() {
     height: document.getElementById('zimage-height'),
     seed: document.getElementById('zimage-seed'),
     seedRandom: document.getElementById('zimage-seed-random'),
+    cfgSelect: document.getElementById('zimage-cfg'),
     templateInputs: Array.from(document.querySelectorAll('input[name="template"]')),
     stylePanel: document.getElementById('zimage-style-panel'),
     loraSelect: document.getElementById('zimage-lora-select'),
@@ -173,7 +193,12 @@ function initZImageTool() {
   const state = {
     templateId: 'min',
     history: [],
+    localRecords: [],
+    hiddenIds: new Set(),
+    remoteHistory: [],
+    persistedHistory: [],
   };
+  let lastValidCfg = ui.cfgSelect ? ui.cfgSelect.value : '1.2';
 
   function setStatus(message) {
     ui.status.textContent = message || '';
@@ -232,11 +257,11 @@ function initZImageTool() {
 
   function loadHistory() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(HISTORY_KEY);
       if (!raw) return [];
       const data = JSON.parse(raw);
       if (!Array.isArray(data)) return [];
-      return data.map((item) => ({
+      const normalized = data.map((item) => ({
         ...item,
         images: Array.isArray(item.images) ? item.images : [],
         elapsedMs: item.elapsedMs ?? item.durationMs ?? null,
@@ -246,7 +271,9 @@ function initZImageTool() {
         upscaleModelName: item.upscaleModelName ?? item.upscale_model_name ?? '',
         baseWidth: item.baseWidth ?? item.base_width ?? item.width ?? 0,
         baseHeight: item.baseHeight ?? item.base_height ?? item.height ?? 0,
+        startTs: item.startTs ?? item.createdAt ?? null,
       }));
+      return trimHistory(normalized);
     } catch (err) {
       console.warn('Failed to load history', err);
       return [];
@@ -255,10 +282,38 @@ function initZImageTool() {
 
   function saveHistory() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history));
+      state.persistedHistory = trimHistory(state.persistedHistory);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(state.persistedHistory));
     } catch (err) {
       console.warn('Failed to save history', err);
     }
+  }
+
+  function loadHiddenIds() {
+    try {
+      const raw = localStorage.getItem(HIDDEN_KEY);
+      if (!raw) return new Set();
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) return new Set();
+      return new Set(data.filter(Boolean));
+    } catch (err) {
+      console.warn('Failed to load hidden ids', err);
+      return new Set();
+    }
+  }
+
+  function saveHiddenIds() {
+    try {
+      localStorage.setItem(HIDDEN_KEY, JSON.stringify(Array.from(state.hiddenIds)));
+    } catch (err) {
+      console.warn('Failed to save hidden ids', err);
+    }
+  }
+
+  function trimHistory(records) {
+    const cleaned = records.filter((item) => item && item.taskId);
+    const sorted = cleaned.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return sorted.slice(0, MAX_HISTORY_RECORDS);
   }
 
   function setTemplate(templateId) {
@@ -340,6 +395,92 @@ function initZImageTool() {
     };
   }
 
+  function normalizeImageItem(item) {
+    if (!item) return null;
+    const taskId = item.task_id || item.taskId || item.filename;
+    if (!taskId) return null;
+    const record = {
+      id: taskId,
+      taskId,
+      status: 'done',
+      createdAt: item.created_at || item.createdAt || Date.now(),
+      doneTs: item.created_at || item.createdAt || null,
+      elapsedMs: null,
+      width: item.width || 0,
+      height: item.height || 0,
+      baseWidth: item.width || 0,
+      baseHeight: item.height || 0,
+      seed: '',
+      templateId: '',
+      promptSummary: '',
+      loraName: '',
+      enableUpscale: false,
+      upscaleModelName: '',
+      images: [
+        {
+          filename: item.filename,
+          url: item.url,
+          width: item.width,
+          height: item.height,
+        },
+      ],
+      errorCount: 0,
+    };
+    const computed = computeDisplaySize(record);
+    record.displayWidth = record.displayWidth ?? computed.displayWidth;
+    record.displayHeight = record.displayHeight ?? computed.displayHeight;
+    return record;
+  }
+
+  function mergeHistory(remoteItems = state.remoteHistory) {
+    const merged = new Map();
+    remoteItems.forEach((item) => {
+      if (state.hiddenIds.has(item.taskId)) return;
+      merged.set(item.taskId, item);
+    });
+    state.persistedHistory.forEach((persisted) => {
+      if (state.hiddenIds.has(persisted.taskId)) return;
+      const existing = merged.get(persisted.taskId);
+      if (!existing) {
+        merged.set(persisted.taskId, persisted);
+      }
+    });
+    state.localRecords.forEach((local) => {
+      if (state.hiddenIds.has(local.taskId)) return;
+      const existing = merged.get(local.taskId);
+      if (!existing) {
+        merged.set(local.taskId, local);
+      } else if (existing.status !== 'done') {
+        merged.set(local.taskId, { ...existing, ...local });
+      }
+    });
+    state.localRecords = state.localRecords.filter((local) => {
+      const existing = merged.get(local.taskId);
+      return !existing || existing.status !== 'done';
+    });
+    const list = Array.from(merged.values()).sort(
+      (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+    );
+    state.history = list;
+    renderHistory();
+  }
+
+  async function fetchImageIndex() {
+    try {
+      const res = await fetch(`${API_BASE}/api/images`);
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      const items = Array.isArray(data.images) ? data.images : [];
+      const normalized = items.map(normalizeImageItem).filter(Boolean);
+      state.remoteHistory = normalized;
+      mergeHistory(normalized);
+    } catch (err) {
+      // Ignore fetch errors for shared history.
+    }
+  }
+
   function formatTime(timestamp) {
     if (!timestamp) return '-';
     const date = new Date(timestamp);
@@ -397,23 +538,6 @@ function initZImageTool() {
       <div>耗时：${formatDuration(item.elapsedMs)}</div>
     `;
 
-    const actions = document.createElement('div');
-    actions.className = 'zimage-actions';
-
-    const copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.className = 'btn-secondary';
-    copyBtn.textContent = '复制URL';
-    copyBtn.disabled = !item.url;
-    copyBtn.addEventListener('click', () => copyText(item.url));
-
-    const copyTaskBtn = document.createElement('button');
-    copyTaskBtn.type = 'button';
-    copyTaskBtn.className = 'btn-secondary';
-    copyTaskBtn.textContent = 'Task_ID';
-    copyTaskBtn.disabled = !item.taskId;
-    copyTaskBtn.addEventListener('click', () => copyText(item.taskId));
-
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'zimage-delete';
@@ -421,32 +545,15 @@ function initZImageTool() {
     deleteBtn.innerHTML = '<span class="zimage-delete-icon" aria-hidden="true"></span>';
     deleteBtn.addEventListener('click', (event) => {
       event.stopPropagation();
-      removeRecord(item.recordId);
+      hideRecord(item.taskId);
     });
 
-    const viewBtn = document.createElement('button');
-    viewBtn.type = 'button';
-    viewBtn.className = 'btn-secondary';
-    viewBtn.textContent = '打开图片';
-    viewBtn.disabled = !item.url;
-    viewBtn.addEventListener('click', () => showOverlay(item.url));
-
-    const retryBtn = document.createElement('button');
-    retryBtn.type = 'button';
-    retryBtn.className = 'btn-secondary';
-    retryBtn.textContent = '重新获取';
-    retryBtn.disabled = !item.taskId;
-    retryBtn.addEventListener('click', () => recoverImages(item.taskId));
-
-    actions.appendChild(copyBtn);
-    actions.appendChild(copyTaskBtn);
-    actions.appendChild(viewBtn);
-    actions.appendChild(retryBtn);
-
     card.appendChild(preview);
+    if (item.url) {
+      preview.addEventListener('click', () => showOverlay(item.url));
+    }
     card.appendChild(deleteBtn);
     card.appendChild(info);
-    card.appendChild(actions);
     return card;
   }
 
@@ -499,23 +606,31 @@ function initZImageTool() {
   }
 
   function updateRecord(recordId, updater) {
-    const idx = state.history.findIndex((item) => item.id === recordId);
-    if (idx === -1) return;
-    const next = { ...state.history[idx], ...updater };
-    if (next.displayWidth == null || next.displayHeight == null) {
-      const computed = computeDisplaySize(next);
-      next.displayWidth = computed.displayWidth;
-      next.displayHeight = computed.displayHeight;
-    }
-    state.history[idx] = next;
+    const updateList = (list) => {
+      const idx = list.findIndex((item) => item.id === recordId || item.taskId === recordId);
+      if (idx === -1) return null;
+      const next = { ...list[idx], ...updater };
+      if (next.displayWidth == null || next.displayHeight == null) {
+        const computed = computeDisplaySize(next);
+        next.displayWidth = computed.displayWidth;
+        next.displayHeight = computed.displayHeight;
+      }
+      list[idx] = next;
+      return next;
+    };
+
+    updateList(state.localRecords);
+    updateList(state.persistedHistory);
+    updateList(state.history);
     saveHistory();
     renderHistory();
   }
 
-  function removeRecord(recordId) {
-    state.history = state.history.filter((item) => item.id !== recordId);
-    saveHistory();
-    renderHistory();
+  function hideRecord(taskId) {
+    if (!taskId) return;
+    state.hiddenIds.add(taskId);
+    saveHiddenIds();
+    mergeHistory(state.remoteHistory);
   }
 
   async function pollImages(record) {
@@ -567,6 +682,7 @@ function initZImageTool() {
             displayHeight: record.displayHeight ?? data.images[0]?.height ?? record.height,
           });
           pollers.delete(record.id);
+          fetchImageIndex();
           return;
         }
         scheduleNextPoll(record, POLL_READY_DELAY_MS);
@@ -577,7 +693,7 @@ function initZImageTool() {
       updateRecord(record.id, {
         errorCount: nextErrorCount,
       });
-      if (nextErrorCount >= 5) {
+      if (nextErrorCount >= POLL_MAX_ERRORS) {
         updateRecord(record.id, {
           status: 'failed',
           error: err?.message || '请求失败',
@@ -641,6 +757,10 @@ function initZImageTool() {
       width,
       height,
     };
+    if (ui.cfgSelect) {
+      const cfgValue = Number(ui.cfgSelect.value);
+      payload.cfg = Number.isFinite(cfgValue) ? cfgValue : 1.2;
+    }
 
     if (state.templateId === 'lora_upscale') {
       payload.enable_lora = true;
@@ -674,7 +794,7 @@ function initZImageTool() {
       const enableUpscale = payload.enable_upscale === true;
       const upscaleModelName = payload.upscale_model_name || '';
       const record = {
-        id: `zimage_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+        id: data.task_id,
         taskId: data.task_id,
         status: 'running',
         createdAt: Date.now(),
@@ -697,9 +817,10 @@ function initZImageTool() {
       const computedSize = computeDisplaySize(record);
       record.displayWidth = computedSize.displayWidth;
       record.displayHeight = computedSize.displayHeight;
-      state.history.unshift(record);
+      state.localRecords.unshift(record);
+      state.persistedHistory.unshift(record);
       saveHistory();
-      renderHistory();
+      mergeHistory(state.remoteHistory);
       setStatus('任务已提交，等待生成结果');
       startPolling(record);
     } catch (err) {
@@ -748,7 +869,7 @@ function initZImageTool() {
         const baseWidth = data.images[0]?.width || 0;
         const baseHeight = data.images[0]?.height || 0;
         const newRecord = {
-          id: `zimage_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+          id: taskId,
           taskId,
           status: 'done',
           createdAt: Date.now(),
@@ -771,11 +892,13 @@ function initZImageTool() {
         const computedSize = computeDisplaySize(newRecord);
         newRecord.displayWidth = computedSize.displayWidth;
         newRecord.displayHeight = computedSize.displayHeight;
-        state.history.unshift(newRecord);
+        state.localRecords.unshift(newRecord);
+        state.persistedHistory.unshift(newRecord);
         saveHistory();
-        renderHistory();
+        mergeHistory(state.remoteHistory);
       }
       setStatus('已回捞图片');
+      fetchImageIndex();
     } catch (err) {
       setError(err?.message || '未知错误');
       setStatus('查询失败');
@@ -783,12 +906,21 @@ function initZImageTool() {
   }
 
   function hydrateHistory() {
-    state.history = loadHistory();
-    renderHistory();
-    state.history.forEach((record) => {
-      if (record.status === 'running' || record.status === 'pending') {
-        startPolling(record);
+    state.hiddenIds = loadHiddenIds();
+    state.persistedHistory = loadHistory();
+    mergeHistory(state.remoteHistory);
+    fetchImageIndex();
+    resumePendingPolls();
+  }
+
+  function resumePendingPolls() {
+    state.persistedHistory.forEach((record) => {
+      if (!record || !record.taskId) return;
+      if (record.status === 'done' || record.status === 'failed') return;
+      if (!record.startTs) {
+        record.startTs = record.createdAt || Date.now();
       }
+      startPolling(record);
     });
   }
 
@@ -800,6 +932,16 @@ function initZImageTool() {
   ui.templateInputs.forEach((input) => {
     input.addEventListener('change', () => {
       setTemplate(input.value);
+    });
+  });
+
+  document.querySelectorAll('.zimage-prompt-clear').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const target = targetId ? document.getElementById(targetId) : null;
+      if (target) {
+        target.value = '';
+      }
     });
   });
 
@@ -822,6 +964,16 @@ function initZImageTool() {
   ui.seedRandom.addEventListener('click', () => {
     ui.seed.value = randomSeed();
   });
+  if (ui.cfgSelect) {
+    ui.cfgSelect.addEventListener('input', () => {
+      const value = Number(ui.cfgSelect.value);
+      if (Number.isFinite(value) && value >= 1 && value <= 2) {
+        lastValidCfg = ui.cfgSelect.value;
+        return;
+      }
+      ui.cfgSelect.value = lastValidCfg;
+    });
+  }
 
   ui.loraSelect.addEventListener('change', updateLoraNote);
   ui.upscaleSelect.addEventListener('change', updateUpscaleNote);

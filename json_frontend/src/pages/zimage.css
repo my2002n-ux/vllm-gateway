@@ -122,6 +122,29 @@
   color: var(--app-muted);
 }
 
+.zimage-textarea-wrap {
+  position: relative;
+  overflow: visible;
+  padding-top: 16px;
+}
+
+.zimage-prompt-clear {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 12px;
+  cursor: pointer;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+}
+
+.zimage-prompt-clear:hover {
+  color: #4b5563;
+}
+
 .zimage-field span {
   color: var(--app-muted);
 }
@@ -143,9 +166,46 @@
   align-items: center;
 }
 
-
 .zimage-seed-row .input {
   flex: 1;
+}
+
+.zimage-seed-left,
+.zimage-seed-right {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.zimage-seed-labels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.zimage-seed-left .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.zimage-seed-left .btn-secondary {
+  min-width: 64px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.zimage-seed-right .input {
+  width: 100%;
+}
+
+.zimage-seed-right .zimage-field {
+  flex: 1;
+}
+
+.zimage-seed-right input.input {
+  width: 100%;
 }
 
 .zimage-field .input,
@@ -232,6 +292,7 @@
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  cursor: pointer;
 }
 
 .zimage-placeholder {
@@ -254,9 +315,7 @@
 }
 
 .zimage-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: none;
 }
 
 .zimage-delete {
