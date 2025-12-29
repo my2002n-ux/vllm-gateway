@@ -272,6 +272,8 @@ function initZImageTool() {
         baseWidth: item.baseWidth ?? item.base_width ?? item.width ?? 0,
         baseHeight: item.baseHeight ?? item.base_height ?? item.height ?? 0,
         startTs: item.startTs ?? item.createdAt ?? null,
+        seed: item.seed ?? item.seed_value ?? '',
+        cfg: item.cfg ?? item.cfgValue ?? item.cfg_value ?? null,
       }));
       return trimHistory(normalized);
     } catch (err) {
@@ -410,7 +412,8 @@ function initZImageTool() {
       height: item.height || 0,
       baseWidth: item.width || 0,
       baseHeight: item.height || 0,
-      seed: '',
+      seed: item.seed ?? '',
+      cfg: item.cfg ?? null,
       templateId: '',
       promptSummary: '',
       loraName: '',
@@ -434,6 +437,18 @@ function initZImageTool() {
 
   function mergeHistory(remoteItems = state.remoteHistory) {
     const merged = new Map();
+    const mergeSeedCfg = (base, incoming) => {
+      const next = { ...base };
+      const incomingSeed = incoming?.seed;
+      const incomingCfg = incoming?.cfg;
+      if ((next.seed === '' || next.seed == null) && incomingSeed !== '' && incomingSeed != null) {
+        next.seed = incomingSeed;
+      }
+      if ((next.cfg === '' || next.cfg == null) && incomingCfg !== '' && incomingCfg != null) {
+        next.cfg = incomingCfg;
+      }
+      return next;
+    };
     remoteItems.forEach((item) => {
       if (state.hiddenIds.has(item.taskId)) return;
       merged.set(item.taskId, item);
@@ -443,6 +458,8 @@ function initZImageTool() {
       const existing = merged.get(persisted.taskId);
       if (!existing) {
         merged.set(persisted.taskId, persisted);
+      } else {
+        merged.set(persisted.taskId, mergeSeedCfg(existing, persisted));
       }
     });
     state.localRecords.forEach((local) => {
@@ -451,7 +468,9 @@ function initZImageTool() {
       if (!existing) {
         merged.set(local.taskId, local);
       } else if (existing.status !== 'done') {
-        merged.set(local.taskId, { ...existing, ...local });
+        merged.set(local.taskId, mergeSeedCfg({ ...existing, ...local }, local));
+      } else {
+        merged.set(local.taskId, mergeSeedCfg(existing, local));
       }
     });
     state.localRecords = state.localRecords.filter((local) => {
@@ -492,6 +511,17 @@ function initZImageTool() {
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
   }
 
+  function formatSeedCfgLine(item) {
+    const seedValue = item.seed ?? item.seedValue ?? '';
+    const cfgValue = item.cfg ?? item.cfgValue ?? null;
+    const seedNumber = Number(seedValue);
+    const cfgNumber = Number(cfgValue);
+    if (!Number.isFinite(seedNumber) || !Number.isFinite(cfgNumber)) {
+      return '';
+    }
+    return `seed：${String(seedValue)}（CFG ${String(cfgValue)}）`;
+  }
+
   function showOverlay(url) {
     ui.overlayImg.src = url;
     ui.overlay.classList.remove('hidden');
@@ -530,10 +560,12 @@ function initZImageTool() {
 
     const info = document.createElement('div');
     info.className = 'zimage-info';
+    const seedCfgLine = formatSeedCfgLine(item);
     info.innerHTML = `
       <div>生成时间：${formatTime(item.createdAt)}</div>
       <div>尺寸：${item.displayWidth || '-'}×${item.displayHeight || '-'}</div>
       <div class="zimage-filename">${item.filename || '未生成'}</div>
+      ${seedCfgLine ? `<div class="zimage-seed-info">${seedCfgLine}</div>` : ''}
       <div class="zimage-task">task_id：${item.taskId || '-'}</div>
       <div>耗时：${formatDuration(item.elapsedMs)}</div>
     `;
@@ -573,6 +605,8 @@ function initZImageTool() {
           displayHeight: record.displayHeight || image.height || record.height,
           filename: image.filename,
           url: image.url,
+          seed: image.seed ?? record.seed,
+          cfg: image.cfg ?? record.cfg,
         });
       });
     } else {
@@ -588,6 +622,8 @@ function initZImageTool() {
         displayHeight,
         filename: record.filename,
         url: record.url,
+        seed: record.seed,
+        cfg: record.cfg,
       });
     }
     });
@@ -805,6 +841,7 @@ function initZImageTool() {
         baseWidth: width,
         baseHeight: height,
         seed,
+        cfg: payload.cfg ?? null,
         templateId: state.templateId,
         promptSummary: promptText.slice(0, 80),
         loraName: payload.lora_name || '',
@@ -877,12 +914,13 @@ function initZImageTool() {
           doneTs,
           width: baseWidth,
           height: baseHeight,
-          baseWidth,
-          baseHeight,
-          seed: '',
-          templateId: '',
-          promptSummary: '',
-          loraName: '',
+        baseWidth,
+        baseHeight,
+        seed: '',
+        cfg: null,
+        templateId: '',
+        promptSummary: '',
+        loraName: '',
           enableUpscale: false,
           upscaleModelName: '',
           images: data.images,
