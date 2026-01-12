@@ -1,0 +1,90 @@
+{
+  "client_id": "chatveil-api",
+  "prompt": {
+    "60": {
+      "inputs": {
+        "filename_prefix": "Qwen-Image-2512",
+        "images": ["86:8", 0]
+      },
+      "class_type": "SaveImage"
+    },
+    "91": {
+      "inputs": {
+        "value": "__PROMPT__"
+      },
+      "class_type": "PrimitiveStringMultiline"
+    },
+    "86:39": {
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      },
+      "class_type": "VAELoader"
+    },
+    "86:38": {
+      "inputs": {
+        "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      },
+      "class_type": "CLIPLoader"
+    },
+    "86:37": {
+      "inputs": {
+        "unet_name": "qwen_image_2512_fp8_e4m3fn.safetensors",
+        "weight_dtype": "default"
+      },
+      "class_type": "UNETLoader"
+    },
+    "86:66": {
+      "inputs": {
+        "shift": 3.1000000000000005,
+        "model": ["86:37", 0]
+      },
+      "class_type": "ModelSamplingAuraFlow"
+    },
+    "86:58": {
+      "inputs": {
+        "width": "__WIDTH__",
+        "height": "__HEIGHT__",
+        "batch_size": 1
+      },
+      "class_type": "EmptySD3LatentImage"
+    },
+    "86:81": {
+      "inputs": {
+        "text": ["91", 0],
+        "clip": ["86:38", 0]
+      },
+      "class_type": "CLIPTextEncode"
+    },
+    "86:7": {
+      "inputs": {
+        "text": "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲",
+        "clip": ["86:38", 0]
+      },
+      "class_type": "CLIPTextEncode"
+    },
+    "86:3": {
+      "inputs": {
+        "seed": "__SEED__",
+        "steps": 50,
+        "cfg": 4,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1,
+        "model": ["86:66", 0],
+        "positive": ["86:81", 0],
+        "negative": ["86:7", 0],
+        "latent_image": ["86:58", 0]
+      },
+      "class_type": "KSampler"
+    },
+    "86:8": {
+      "inputs": {
+        "samples": ["86:3", 0],
+        "vae": ["86:39", 0]
+      },
+      "class_type": "VAEDecode"
+    }
+  }
+}
