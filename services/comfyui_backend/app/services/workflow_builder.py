@@ -13,6 +13,7 @@ class TemplateError(ValueError):
 _TEMPLATE_MAP = {
     "min": "template_min.API_READY.json",
     "lora_upscale": "z_image_turbo_lora_upscale_api.final.prompt.json",
+    "qwen_2512": "z_image_qwen_2512_api.prompt.json",
 }
 
 _ALLOWED_UPSCALE_MODELS = {
