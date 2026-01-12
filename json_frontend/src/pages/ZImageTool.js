@@ -50,6 +50,10 @@ export function createZImageToolPage() {
                     <input type="radio" name="template" value="lora_upscale" />
                     指定风格
                   </label>
+                  <label class="zimage-radio">
+                    <input type="radio" name="template" value="qwen_2512" />
+                    Qwen 2512
+                  </label>
                 </div>
               </div>
 
@@ -320,6 +324,15 @@ function initZImageTool() {
 
   function setTemplate(templateId) {
     state.templateId = templateId;
+    if (ui.cfgSelect) {
+      if (templateId === 'qwen_2512') {
+        ui.cfgSelect.value = '4';
+        ui.cfgSelect.disabled = true;
+      } else {
+        ui.cfgSelect.disabled = false;
+        ui.cfgSelect.value = lastValidCfg || '1.2';
+      }
+    }
     if (templateId === 'lora_upscale') {
       ui.stylePanel.classList.remove('hidden');
       const defaultLora = LORA_OPTIONS.find((opt) => opt.value === 'Z-Real-v1.0.safetensors');
@@ -794,8 +807,12 @@ function initZImageTool() {
       height,
     };
     if (ui.cfgSelect) {
-      const cfgValue = Number(ui.cfgSelect.value);
-      payload.cfg = Number.isFinite(cfgValue) ? cfgValue : 1.2;
+      if (state.templateId === 'qwen_2512') {
+        payload.cfg = 4;
+      } else {
+        const cfgValue = Number(ui.cfgSelect.value);
+        payload.cfg = Number.isFinite(cfgValue) ? cfgValue : 1.2;
+      }
     }
 
     if (state.templateId === 'lora_upscale') {
