@@ -91,12 +91,19 @@ def build_prompt(
     prompt = _extract_prompt(raw_template)
     prompt = deepcopy(prompt)
 
-    _ensure_inputs(prompt, "45")["text"] = prompt_text
-    _ensure_inputs(prompt, "44")["seed"] = seed
-    size_inputs = _ensure_inputs(prompt, "41")
-    size_inputs["width"] = width
-    size_inputs["height"] = height
-    size_inputs["batch_size"] = batch_size
+    if template_id == "qwen_2512":
+        _ensure_inputs(prompt, "91")["value"] = prompt_text
+        _ensure_inputs(prompt, "86:3")["seed"] = seed
+        size_inputs = _ensure_inputs(prompt, "86:58")
+        size_inputs["width"] = width
+        size_inputs["height"] = height
+    else:
+        _ensure_inputs(prompt, "45")["text"] = prompt_text
+        _ensure_inputs(prompt, "44")["seed"] = seed
+        size_inputs = _ensure_inputs(prompt, "41")
+        size_inputs["width"] = width
+        size_inputs["height"] = height
+        size_inputs["batch_size"] = batch_size
 
     if template_id != "lora_upscale" and (enable_lora or enable_upscale or lora_name or upscale_model_name):
         raise TemplateError("LoRA/upscale options are only valid for lora_upscale template")
