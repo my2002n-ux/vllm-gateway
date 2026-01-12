@@ -34,7 +34,7 @@ _TASKS: Dict[str, TaskRecord] = {}
 
 
 class GenerateRequest(BaseModel):
-    template_id: Literal["min", "lora_upscale"] = Field(..., description="min or lora_upscale")
+    template_id: Literal["min", "lora_upscale", "qwen_2512"] = Field(..., description="min / lora_upscale / qwen_2512")
     prompt_text: str
     seed: int
     width: int = Field(512, ge=1)
