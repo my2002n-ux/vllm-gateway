@@ -92,9 +92,28 @@ def build_prompt(
     prompt = deepcopy(prompt)
 
     if template_id == "qwen_2512":
-        _ensure_inputs(prompt, "91")["value"] = prompt_text
-        _ensure_inputs(prompt, "86:3")["seed"] = seed
-        size_inputs = _ensure_inputs(prompt, "86:58")
+        node_91 = prompt.get("91")
+        if not isinstance(node_91, dict) or "inputs" not in node_91:
+            raise TemplateError("missing node 91")
+        inputs_91 = node_91.get("inputs")
+        if not isinstance(inputs_91, dict):
+            raise TemplateError("missing node 91")
+        inputs_91["value"] = prompt_text
+
+        node_86_3 = prompt.get("86:3")
+        if not isinstance(node_86_3, dict) or "inputs" not in node_86_3:
+            raise TemplateError("missing node 86:3")
+        inputs_86_3 = node_86_3.get("inputs")
+        if not isinstance(inputs_86_3, dict):
+            raise TemplateError("missing node 86:3")
+        inputs_86_3["seed"] = seed
+
+        node_86_58 = prompt.get("86:58")
+        if not isinstance(node_86_58, dict) or "inputs" not in node_86_58:
+            raise TemplateError("missing node 86:58")
+        size_inputs = node_86_58.get("inputs")
+        if not isinstance(size_inputs, dict):
+            raise TemplateError("missing node 86:58")
         size_inputs["width"] = width
         size_inputs["height"] = height
     else:
